@@ -1,0 +1,19 @@
+# Secrets — never commit real values. `.env.example` is the only env file that
+# belongs in the repo, and it must contain placeholders only.
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules
+dist
+
+# Convex regenerates this on `convex dev`
+src/convex/_generated
+
+# Local Convex dev state: a machine-local sqlite database and module blobs.
+# It is tens of megabytes of throwaway data and must never be committed.
+.convex
+
+# Local dev-server logs and pid files
+.vly-run

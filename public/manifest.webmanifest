@@ -1,0 +1,17 @@
+{
+  "name": "PROFESHARE Opportunity Search",
+  "short_name": "PROFESHARE",
+  "description": "Find relevant jobs and apply with confidence. Describe the role you want in plain English and get live listings ranked with the reasons attached.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0c0e",
+  "theme_color": "#0c0c0e",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

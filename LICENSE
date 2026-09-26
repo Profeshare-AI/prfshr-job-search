@@ -1,0 +1,30 @@
+Copyright (c) 2026 Profeshare AI, an ArikaX entity. All rights reserved.
+
+PRFSHR Opportunity Search — Proprietary Software
+
+This software and its source code (the "Software") are the confidential and
+proprietary property of Profeshare AI, an ArikaX entity (the "Owner").
+
+No license, express or implied, is granted to any person or entity to use, copy,
+modify, merge, publish, distribute, sublicense, sell, host, or otherwise exploit
+the Software, in whole or in part, except as expressly permitted in writing by
+the Owner.
+
+The Software is developed as an internal component of the Owner's products and is
+made available to end users only as a hosted service operated by the Owner.
+Access to the hosted service is granted solely under the Owner's applicable terms
+of service. Access to this repository, or possession of a copy of the Software,
+does not convey any right to use, reproduce, or redistribute it.
+
+Third-party components included in or depended upon by the Software remain
+subject to their own licenses. In particular, job listing data is provided by
+Arbeitnow (https://www.arbeitnow.com) and remains subject to Arbeitnow's terms of
+use: attribution is required, and applications must link back to the original
+posting. Nothing in this notice grants rights to any third-party component.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE OWNER BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

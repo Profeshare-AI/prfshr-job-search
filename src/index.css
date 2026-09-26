@@ -1,0 +1,346 @@
+/* DO NOT CHANGE */
+@import "tailwindcss";
+@import "tw-animate-css";
+@custom-variant dark (&:is(.dark *));
+
+/* DO NOT CHANGE */
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* PROFESHARE palette, exposed as Tailwind colors (bg-nb-amber, border-nb-line, ...).
+   The values below are the dark defaults; the live values come from the
+   :root / html.light / html.dark blocks further down so both themes can reuse
+   the exact same class names.
+
+   Two rules keep every pairing legible in both themes:
+     1. `nb-line` is always the outline + body type colour.
+     2. `nb-deep` is always the counterpart of `nb-line`: the tinted strip
+        colour, the input background, and the text colour used on top of the
+        accent blocks. Inverting it per theme keeps `bg-nb-amber text-nb-deep`
+        readable whichever theme is active. */
+@theme {
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Square corners everywhere, including the larger shadcn radii. */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+}
+
+/* The PROFESHARE colours resolve through the raw --nb-* palette variables, so the
+   same class name (`bg-nb-amber`, `text-nb-deep`, …) switches with the theme
+   instead of being baked to one hex value. */
+@theme inline {
+  --color-nb-line: var(--nb-line);
+  --color-nb-deep: var(--nb-deep);
+  --color-nb-surface: var(--nb-surface);
+  --color-nb-surface2: var(--nb-surface2);
+  --color-nb-amber: var(--nb-amber);
+  --color-nb-green: var(--nb-green);
+  --color-nb-blue: var(--nb-blue);
+  --color-nb-red: var(--nb-red);
+}
+
+/* CHANGE VALUES FOR THEME */
+/* Neobrutalism Minimalism: square corners, hard 2px outlines, flat color
+   blocking. `:root` is the dark theme (the default before the theme script
+   runs), `html.light` is the paper theme and `html.dark` mirrors :root so the
+   class next-themes writes always wins. */
+:root {
+  --radius: 0rem;
+  /* raw palette used by the .nb-* utilities below */
+  --nb-line: #f2efe6;
+  --nb-deep: #0c0c0e;
+  --nb-surface: #15151a;
+  --nb-surface2: #1d1d24;
+  --nb-amber: #ffd34d;
+  --nb-green: #45d68a;
+  --nb-blue: #7da2ff;
+  --nb-red: #ff7a6b;
+
+  --background: #0c0c0e;
+  --foreground: #f2efe6;
+  --card: #15151a;
+  --card-foreground: #f2efe6;
+  --popover: #15151a;
+  --popover-foreground: #f2efe6;
+  --primary: #ffd34d;
+  --primary-foreground: #0c0c0e;
+  --secondary: #1d1d24;
+  --secondary-foreground: #f2efe6;
+  --muted: #1d1d24;
+  --muted-foreground: #a8a49c;
+  --accent: #26262e;
+  --accent-foreground: #f2efe6;
+  --destructive: #ff7a6b;
+  --border: #f2efe6;
+  --input: #f2efe6;
+  --ring: #ffd34d;
+  --chart-1: #ffd34d;
+  --chart-2: #45d68a;
+  --chart-3: #7da2ff;
+  --chart-4: #ff7a6b;
+  --chart-5: #a8a49c;
+  --sidebar: #15151a;
+  --sidebar-foreground: #f2efe6;
+  --sidebar-primary: #ffd34d;
+  --sidebar-primary-foreground: #0c0c0e;
+  --sidebar-accent: #1d1d24;
+  --sidebar-accent-foreground: #f2efe6;
+  --sidebar-border: #f2efe6;
+  --sidebar-ring: #ffd34d;
+}
+
+/* Light: warm paper canvas, white cards, black outlines and hard black
+   shadows. The accents are deliberately deep and saturated so cream type
+   stays readable on top of them (`bg-nb-amber text-nb-deep` and friends). */
+html.light {
+  --nb-line: #000000;
+  --nb-deep: #f4f0e4;
+  --nb-surface: #ffffff;
+  --nb-surface2: #e9e4d6;
+  --nb-amber: #8a6400;
+  --nb-green: #1c6b42;
+  --nb-blue: #1f3fa8;
+  --nb-red: #a32b22;
+
+  --background: #fffdf5;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --primary: #8a6400;
+  --primary-foreground: #f4f0e4;
+  --secondary: #f0ece1;
+  --secondary-foreground: #0a0a0a;
+  --muted: #f4f1e8;
+  --muted-foreground: #57534a;
+  --accent: #f0ece1;
+  --accent-foreground: #0a0a0a;
+  --destructive: #a32b22;
+  --border: #000000;
+  --input: #000000;
+  --ring: #000000;
+  --chart-1: #8a6400;
+  --chart-2: #1c6b42;
+  --chart-3: #1f3fa8;
+  --chart-4: #a32b22;
+  --chart-5: #57534a;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: #8a6400;
+  --sidebar-primary-foreground: #f4f0e4;
+  --sidebar-accent: #f0ece1;
+  --sidebar-accent-foreground: #0a0a0a;
+  --sidebar-border: #000000;
+  --sidebar-ring: #000000;
+}
+
+/* Dark, mirroring :root so an explicit .dark class always matches it. */
+html.dark {
+  --nb-line: #f2efe6;
+  --nb-deep: #0c0c0e;
+  --nb-surface: #15151a;
+  --nb-surface2: #1d1d24;
+  --nb-amber: #ffd34d;
+  --nb-green: #45d68a;
+  --nb-blue: #7da2ff;
+  --nb-red: #ff7a6b;
+
+  --background: #0c0c0e;
+  --foreground: #f2efe6;
+  --card: #15151a;
+  --card-foreground: #f2efe6;
+  --popover: #15151a;
+  --popover-foreground: #f2efe6;
+  --primary: #ffd34d;
+  --primary-foreground: #0c0c0e;
+  --secondary: #1d1d24;
+  --secondary-foreground: #f2efe6;
+  --muted: #1d1d24;
+  --muted-foreground: #a8a49c;
+  --accent: #26262e;
+  --accent-foreground: #f2efe6;
+  --destructive: #ff7a6b;
+  --border: #f2efe6;
+  --input: #f2efe6;
+  --ring: #ffd34d;
+  --chart-1: #ffd34d;
+  --chart-2: #45d68a;
+  --chart-3: #7da2ff;
+  --chart-4: #ff7a6b;
+  --chart-5: #a8a49c;
+  --sidebar: #15151a;
+  --sidebar-foreground: #f2efe6;
+  --sidebar-primary: #ffd34d;
+  --sidebar-primary-foreground: #0c0c0e;
+  --sidebar-accent: #1d1d24;
+  --sidebar-accent-foreground: #f2efe6;
+  --sidebar-border: #f2efe6;
+  --sidebar-ring: #ffd34d;
+}
+
+/* -------------------------------------------------------------------------
+   Neobrutalism Minimalism helpers, tuned for the dark PROFESHARE canvas:
+   square corners, 2px cream outlines, hard offset shadows, flat blocks.
+   ------------------------------------------------------------------------- */
+.nb-border {
+  border: 2px solid var(--nb-line);
+}
+.nb-border-t {
+  border-top: 2px solid var(--nb-line);
+}
+.nb-border-b {
+  border-bottom: 2px solid var(--nb-line);
+}
+.nb-border-l {
+  border-left: 2px solid var(--nb-line);
+}
+.nb-shadow-xs {
+  box-shadow: 1px 1px 0 0 var(--nb-line);
+}
+.nb-shadow-sm {
+  box-shadow: 2px 2px 0 0 var(--nb-line);
+}
+.nb-shadow {
+  box-shadow: 4px 4px 0 0 var(--nb-line);
+}
+.nb-shadow-lg {
+  box-shadow: 6px 6px 0 0 var(--nb-line);
+}
+.nb-shadow-xl {
+  box-shadow: 10px 10px 0 0 var(--nb-line);
+}
+.nb-shadow-accent {
+  box-shadow: 4px 4px 0 0 var(--nb-amber);
+}
+/* lift on hover, press on click */
+.nb-lift {
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.nb-lift:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--nb-amber);
+  border-color: var(--nb-amber);
+}
+.nb-lift:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 0 var(--nb-amber);
+}
+.nb-press {
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease;
+}
+.nb-press:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 0 transparent;
+}
+.font-display {
+  font-family: "Archivo Black", "Space Grotesk", ui-sans-serif, sans-serif;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+/* faint technical grid behind hero and empty states */
+.nb-grid {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--nb-line) 7%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--nb-line) 7%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 44px 44px;
+}
+.nb-hatch {
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--nb-line) 0,
+    var(--nb-line) 1.5px,
+    transparent 1.5px,
+    transparent 9px
+  );
+}
+.nb-focus:focus-visible {
+  outline: 3px solid var(--nb-amber);
+  outline-offset: 2px;
+}
+.nb-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--nb-line) transparent;
+}
+
+::selection {
+  background: var(--nb-amber);
+  color: var(--nb-deep);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+  }
+  button:not([disabled]),
+  [role="button"]:not([disabled]) {
+    cursor: pointer;
+  }
+}
