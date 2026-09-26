@@ -95,7 +95,7 @@ export default function Browse() {
             Every live listing we can see right now.
           </h1>
           <p className="mt-3 text-sm leading-6 text-nb-line/55 sm:text-base">
-            Newest first, de-duplicated, {catalog?.stats.maxResults ?? 50} at a time.
+            Newest first, de-duplicated, {catalog?.stats.maxResults ?? 100} at a time.
             Filter it here, or hand the whole thing to PROFESHARE as a sentence and get
             it ranked instead.
           </p>

@@ -20,7 +20,8 @@ export type Freshness = (typeof FRESHNESS)[number];
 export const BANDS = ["strong", "good", "fair", "weak"] as const;
 export type Band = (typeof BANDS)[number];
 
-export const MAX_RESULTS = 50;
+/** Upper bound on how many ranked listings one search (or catalog page) returns. */
+export const MAX_RESULTS = 100;
 
 /* -------------------------------------------------------------------------- */
 /*  Client-facing validators (shared by the actions and the React app)        */
