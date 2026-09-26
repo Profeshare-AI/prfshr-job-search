@@ -170,6 +170,7 @@ other is "the listing says nothing". Both lower the score, neither is hidden.
 | `/dashboard` | protected | Personal workspace — greeting, session panel, prompt composer, "how PROFESHARE read your request", ranked result cards |
 | `/browse` | protected | Catalog — newest live listings with filtering, plus a plain-English hand-off |
 | `/jobs/:id` | protected | Detail page — score, apply-confidence breakdown, preview, source record, Apply |
+| `/github` | protected | GitHub connection — link an account, create a repository, browse existing ones |
 | `*` | public | 404 |
 
 Protected routes use the shared `RequireAuth` wrapper, which states the block on the page
@@ -550,9 +551,9 @@ Rules for anyone working in this repository:
 - **Do not modify** `src/convex/auth.config.ts`, `src/convex/auth.ts`,
   `src/convex/auth/emailOtp.ts`, or anything in `src/convex/_generated/`. Regenerate the
   latter with `bun convex dev --once`, never by hand.
-- **External calls belong in `"use node"` Convex actions.** `src/convex/jobs/search.ts` is
-  the only such file; it exports actions only, and the boards in `providers/` are only ever
-  reached from there.
+- **External calls belong in `"use node"` Convex actions.** `src/convex/jobs/search.ts`
+  (job boards) and `src/convex/github/connect.ts` (GitHub REST) are the only such files; they
+  export actions only, and the boards in `providers/` are only ever reached from `search.ts`.
 - **Every board implements `JobSource`** and must not throw for a partial failure: return what
   you got and put the reason in `note`. A source must never know about the scorer, and the
   scorer must never know about sources.
