@@ -34,10 +34,47 @@ const schema = defineSchema(
 
     // add other tables here
 
-    // tableName: defineTable({
-    //   ...
-    //   // table fields
-    // }).index("by_field", ["field"])
+    // Request accounting and the shared source cache. See API-LIMITS.md for the
+    // documented provider ceilings these counters are checked against, and
+    // src/convex/jobs/budget.ts for the reserve/settle cycle that maintains them.
+    //
+    // None of it is user data: `sourceBudget` and `sourceHealth` count requests,
+    // `sourceCache` holds public board listings, and `userUsage` is a per-hour
+    // search counter keyed by an opaque auth subject.
+    sourceBudget: defineTable({
+      source: v.string(), // the source's display name, e.g. "Adzuna"
+      window: v.string(), // minute | hour | day | week | month
+      windowStart: v.number(), // epoch ms, UTC-aligned
+      used: v.number(),
+    }).index("by_source_window", ["source", "window", "windowStart"]),
+
+    sourceHealth: defineTable({
+      source: v.string(),
+      consecutiveFailures: v.number(),
+      cooldownUntil: v.optional(v.number()),
+      lastError: v.optional(v.string()),
+      lastErrorAt: v.optional(v.number()),
+      lastOkAt: v.optional(v.number()),
+      updatedAt: v.number(),
+    }).index("by_source", ["source"]),
+
+    sourceCache: defineTable({
+      source: v.string(),
+      key: v.string(), // `${source}::${contextShape}`
+      payload: v.string(), // JSON-serialized SourceOutcome
+      state: v.string(), // fetching | ready
+      expiresAt: v.number(),
+      leaseUntil: v.optional(v.number()),
+      updatedAt: v.number(),
+    })
+      .index("by_key", ["key"])
+      .index("by_source", ["source"]),
+
+    userUsage: defineTable({
+      userId: v.string(),
+      windowStart: v.number(),
+      used: v.number(),
+    }).index("by_user_window", ["userId", "windowStart"]),
   },
   {
     schemaValidation: false,

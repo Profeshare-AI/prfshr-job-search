@@ -55,7 +55,8 @@ import {
   normalizeFtJob,
   type FtOffre,
 } from "./francetravail";
-import { buildContext, fetchJson, type JobSource, type SourceReport } from "./source";
+import { buildContext, fetchJson, type JobSource, type SourceOutcome, type SourceReport } from "./source";
+import { cacheKey, cacheTtlFor, contextShape, expectedRequestsFor, keyFieldsFor } from "../limits";
 
 const LOOKUP_TIMEOUT_MS = 12_000;
 const SOURCE_NAME = "Greenhouse/Lever";
@@ -83,6 +84,57 @@ export interface Pool {
 }
 
 /**
+ * What the pipeline needs from the outside world before a source may fetch.
+ *
+ * This exists so `loadPool` stays a pure fan-out that tests can drive with a
+ * fake source list: caching, leasing and request budgets are injected, and the
+ * default (`NO_GATE`) does none of them. Production always passes the real one,
+ * built over a Convex context in `search.ts`.
+ */
+export interface PoolGate {
+  /** A cached outcome for this key, or null. */
+  read(source: string, key: string, now: number): Promise<string | null>;
+  /** `fresh` = already have it, `busy` = someone else is fetching, `claimed` = yours to fetch. */
+  claim(source: string, key: string, now: number): Promise<"fresh" | "busy" | "claimed">;
+  write(source: string, key: string, payload: string, ttlMs: number, now: number): Promise<void>;
+  /** Release a lease after a failed fetch so the next caller may try. */
+  abandon(source: string, key: string): Promise<void>;
+  /**
+   * `charged` is what was actually reserved — it can be less than the requested
+   * cost, and it is the figure the matching `settle` must reconcile against.
+   */
+  reserve(
+    source: string,
+    cost: number,
+    now: number,
+  ): Promise<{ ok: true; charged: number } | { ok: false; reason: string }>;
+  settle(
+    source: string,
+    expected: number,
+    actual: number,
+    ok: boolean,
+    error: string | undefined,
+    now: number,
+  ): Promise<void>;
+}
+
+/** No cache, no accounting — the shape tests and the catalog fall back on. */
+export const NO_GATE: PoolGate = {
+  async read() {
+    return null;
+  },
+  async claim() {
+    return "claimed";
+  },
+  async write() {},
+  async abandon() {},
+  async reserve(_source, cost) {
+    return { ok: true as const, charged: cost };
+  },
+  async settle() {},
+};
+
+/**
  * The catalog has no request behind it, so the sources are handed an empty one:
  * no geography (which keeps every board in play) and no keywords.
  */
@@ -99,9 +151,141 @@ const NEUTRAL_INTENT: JobIntent = {
   understoodBy: "catalog",
 };
 
-function describeStatus(requests: number, note: string | undefined): SourceReport["status"] {
-  if (requests === 0) return "skipped";
-  return note ? "partial" : "ok";
+/** The note a cached outcome carries, so the report never claims a request it did not spend. */
+const CACHE_NOTE = "served from cache";
+
+/**
+ * Three outcomes, not two: a source that declined (spent nothing, said why), one
+ * that answered incompletely, and one that answered. A cached answer spent
+ * nothing but *is* an answer, so it is judged on what the original fetch said
+ * rather than on this run's request count.
+ */
+function describeStatus(outcome: SourceOutcome, cached: boolean): SourceReport["status"] {
+  if (cached) return outcome.note ? "partial" : "ok";
+  if (outcome.requests === 0) return "skipped";
+  return outcome.note ? "partial" : "ok";
+}
+
+function reportFor(
+  source: JobSource,
+  outcome: SourceOutcome,
+  options: { cached?: boolean } = {},
+): SourceReport {
+  const cached = options.cached ?? false;
+  const requests = cached ? 0 : outcome.requests;
+  // A cached outcome keeps whatever the original fetch had to say ("2 of 3
+  // searches answered") and only adds where it came from. Overwriting the note
+  // would hide a partial answer behind a caching remark.
+  const note = cached
+    ? outcome.note
+      ? `${outcome.note}; served from cache`
+      : CACHE_NOTE
+    : outcome.note;
+  return {
+    name: source.name,
+    attribution: source.attribution,
+    attributionUrl: source.attributionUrl,
+    scanned: outcome.scanned,
+    requests,
+    status: describeStatus(outcome, cached),
+    ...(note ? { note } : {}),
+  };
+}
+
+function skippedReport(source: JobSource, note: string): { jobs: NormalizedJob[]; report: SourceReport } {
+  return {
+    jobs: [],
+    report: {
+      name: source.name,
+      attribution: source.attribution,
+      attributionUrl: source.attributionUrl,
+      scanned: 0,
+      requests: 0,
+      status: "skipped",
+      note,
+    },
+  };
+}
+
+/**
+ * One source, in the order that protects it: cache, then lease, then budget,
+ * then the network. A refusal at any step produces a report that says which step
+ * refused, because "skipped" alone tells the reader nothing.
+ */
+async function runSource(
+  source: JobSource,
+  intent: JobIntent,
+  now: number,
+  gate: PoolGate,
+): Promise<{ jobs: NormalizedJob[]; report: SourceReport }> {
+  const context = buildContext(intent, now, source.budget);
+  // Keyed on only what this source actually reads: Arbeitnow's key is constant
+  // (it publishes no search parameters), Jobicy's is geography alone. Over-keying
+  // would spend a limited allowance re-fetching data it would answer identically.
+  const key = cacheKey(source.name, contextShape(context, keyFieldsFor(source.name)));
+  const expected = expectedRequestsFor(source.name);
+
+  const decode = async (payload: string | null) => {
+    if (!payload) return null;
+    try {
+      const outcome = JSON.parse(payload) as SourceOutcome;
+      if (!outcome || !Array.isArray(outcome.jobs)) return null;
+      return { jobs: outcome.jobs, report: reportFor(source, outcome, { cached: true }) };
+    } catch {
+      // A corrupt entry is a miss, never a failure.
+      return null;
+    }
+  };
+
+  try {
+    const cached = await decode(await gate.read(source.name, key, now));
+    if (cached) return cached;
+
+    let lease = await gate.claim(source.name, key, now);
+    if (lease === "busy") {
+      // Another invocation is fetching this exact key. Wait briefly for its
+      // answer before spending a request of our own on the same data.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const waited = await decode(await gate.read(source.name, key, Date.now()));
+      if (waited) return waited;
+      lease = "claimed";
+    }
+
+    const budget = await gate.reserve(source.name, expected, now);
+    if (!budget.ok) {
+      await gate.abandon(source.name, key);
+      return skippedReport(source, budget.reason);
+    }
+
+    try {
+      const outcome = await source.fetch(context);
+      await gate.settle(source.name, budget.charged, outcome.requests, true, undefined, now);
+      // Only a real fetch is cached. A source that declined the request — a
+      // country it does not cover, credentials it does not have — spends nothing
+      // and must be asked afresh next time, because the answer belongs to that
+      // request, not to the clock.
+      if (outcome.requests > 0) {
+        await gate.write(
+          source.name,
+          key,
+          JSON.stringify(outcome),
+          cacheTtlFor(source.name),
+          Date.now(),
+        );
+      } else {
+        await gate.abandon(source.name, key);
+      }
+      return { jobs: outcome.jobs, report: reportFor(source, outcome) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "did not answer";
+      await gate.settle(source.name, budget.charged, 0, false, message, Date.now());
+      await gate.abandon(source.name, key);
+      throw error;
+    }
+  } catch (error) {
+    // One board being down is not a failed search.
+    return skippedReport(source, error instanceof Error ? error.message : "did not answer");
+  }
 }
 
 /**
@@ -115,38 +299,10 @@ export async function loadPool(
   intent: JobIntent,
   now: number,
   sources: JobSource[] = SOURCES,
+  gate: PoolGate = NO_GATE,
 ): Promise<Pool> {
   const outcomes = await Promise.all(
-    sources.map(async (source) => {
-      const context = buildContext(intent, now, source.budget);
-      try {
-        const outcome = await source.fetch(context);
-        const report: SourceReport = {
-          name: source.name,
-          attribution: source.attribution,
-          attributionUrl: source.attributionUrl,
-          scanned: outcome.scanned,
-          requests: outcome.requests,
-          status: describeStatus(outcome.requests, outcome.note),
-          ...(outcome.note ? { note: outcome.note } : {}),
-        };
-        return { jobs: outcome.jobs, report };
-      } catch (error) {
-        // One board being down is not a failed search.
-        return {
-          jobs: [] as NormalizedJob[],
-          report: {
-            name: source.name,
-            attribution: source.attribution,
-            attributionUrl: source.attributionUrl,
-            scanned: 0,
-            requests: 0,
-            status: "skipped" as const,
-            note: error instanceof Error ? error.message : "did not answer",
-          } satisfies SourceReport,
-        };
-      }
-    }),
+    sources.map((source) => runSource(source, intent, now, gate)),
   );
 
   const merged = outcomes.flatMap((outcome) => outcome.jobs);
@@ -160,9 +316,18 @@ export async function loadPool(
   };
 }
 
+/** The production entry point: the live source list, behind the gate. */
+export async function loadLivePool(
+  intent: JobIntent,
+  now: number,
+  gate: PoolGate,
+): Promise<Pool> {
+  return loadPool(intent, now, SOURCES, gate);
+}
+
 /** The catalog pool: every source, nothing asked of it. */
-export async function loadCatalogPool(now: number): Promise<Pool> {
-  return loadPool(NEUTRAL_INTENT, now);
+export async function loadCatalogPool(now: number, gate: PoolGate = NO_GATE): Promise<Pool> {
+  return loadPool(NEUTRAL_INTENT, now, SOURCES, gate);
 }
 
 /* -------------------------------------------------------------------------- */

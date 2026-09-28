@@ -559,8 +559,21 @@ dashboard says so out loud rather than pretending.
   the model layer answers, since the request is parsed before the board is fetched.
 - **Preview snippets, not full descriptions.** The board's own page is the source of truth;
   cards show an excerpt and link out.
-- **No server-side memory.** Results live in the tab. Reload in a new tab and you start a
-  fresh search — that is the intended trade for having no database.
+- **No account database, but there *is* a shared listing cache.** Nothing about a person is
+  stored: no profile, no history, no documents, no saved search. What `sourceCache` holds is
+  public board listings, and what `sourceBudget` holds is request counters. Results still live
+  in the tab; reload in a new tab and you start a fresh search.
+- **Every source request is budgeted and cached.** Each source's allowance is in
+  `src/convex/jobs/budget.ts` — the published ceiling where one exists, a conservative
+  self-imposed one where it does not, and always with a margin left unspent. A search
+  *reserves* what it expects to spend and settles the real figure afterwards, so two
+  simultaneous searches cannot both spend the last request in a window. Cache lifetimes come
+  from each provider's own cadence (24 h for Himalayas, 1 h for Jobicy, 6 h for Adzuna), and the
+  cache key only includes the fields that source actually reads — a different keyword in the
+  same country usually costs nothing at all, and a source that has spent its allowance reports
+  *"has spent its day request budget (200/200); resets in 14h"* instead of an empty list.
+  [`API-LIMITS.md`](./API-LIMITS.md) documents every ceiling, the margin under it, and why
+  rotating multiple accounts is not an option.
 
 ---
 
