@@ -166,6 +166,18 @@ cannot run in CI without a deployment. Typecheck currently happens locally (afte
 needs a `CONVEX_DEPLOY_KEY` repository secret plus a `convex deploy`/`codegen` step — which is
 part of the hosting decision above, not a five-minute change.
 
+**Verified**
+
+- **CI ran and passed on PR #1** — run
+  [`36364524318`](https://github.com/Profeshare-AI/prfshr-job-search/actions/runs/36364524318),
+  event `pull_request`, head branch `codebuff/sync`. Every step green: checkout, `setup-bun`
+  1.3.14, `bun install --frozen-lockfile`, `bun test`, and the tracked-env-file check. The job
+  (`Tests and hygiene`) completed `success` in about ten seconds.
+- **PR #1** — [pull/1](https://github.com/Profeshare-AI/prfshr-job-search/pull/1), 2 files
+  changed, +232/−0, `mergeable_state: clean`.
+- The append path was exercised too: this very line was pushed as a second commit onto the same
+  open PR rather than opening a second one, which is the behaviour `--pr` is meant to have.
+
 **Open**
 
 - **Deeper research owed on hosting and scaling** — a full comparison of the options
