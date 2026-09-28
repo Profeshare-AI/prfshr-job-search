@@ -417,6 +417,26 @@ and India.
 | [Adzuna](https://developer.adzuna.com/) | **India**, on-site, hybrid and remote alike | 1-2 searches of 50 | The one aggregator with a documented free feed that carries India at country level, since the Indian boards themselves (Naukri, foundit, Internshala, Unstop) publish no public API at all. **Needs a free developer account**, and its free plan allows 250 requests a day — see below |
 | Greenhouse & Lever company boards | **Non-remote India and France**, as the employer published it | ≤16 boards + ≤8 lookups | A curated list of live-verified boards in `providers/ats.ts`, split French / German / Indian / distributed; the second route to on-site roles outside France and Germany |
 
+**All seven boards were verified live end-to-end on 28 September 2026.** With every credential
+configured, a real search was run through the deployment (`bun convex run
+jobs/search:searchJobs`) and each source reported its own status back:
+
+| Board | Status | Evidence from the verification run |
+|-------|--------|------------------------------------|
+| Arbeitnow | live | 2 requests, 650 listings scanned |
+| Himalayas | live | 2 requests, 40 listings scanned |
+| Jobicy | live | 1 request, 100 listings scanned |
+| Bundesagentur für Arbeit | live | geo-gated — runs on German requests |
+| France Travail | live | 1 token + 2 searches, 42 listings scanned, `status: ok` |
+| Adzuna (India) | live | 2 searches, 100 listings scanned, on-site Bangalore roles returned |
+| Greenhouse & Lever | live | 24 requests, 1,306 listings scanned |
+
+A worldwide remote request returns **all seven** in the served-source set in a single run; a
+France-only request returns five of them plus France Travail, while Arbeitsagentur and Adzuna
+decline with a stated reason ("the request is not about Germany/India") rather than silently
+returning nothing. The two credentialled sources report *skipped — needs credentials* until
+their keys are set, which is why they were the last two to go live.
+
 The German agency has never published an official API. Its Jobsuche web client authenticates
 with a fixed public client id, which is the default here; set `BA_API_KEY` to override it if a
 registered key is ever issued.
