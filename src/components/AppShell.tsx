@@ -11,7 +11,6 @@ import { Link, useNavigate } from "react-router";
 const NAV = [
   { key: "search", label: "Search", to: "/dashboard", hint: "Describe a role in plain English" },
   { key: "catalog", label: "Catalog", to: "/browse", hint: "Browse every live listing" },
-  { key: "github", label: "GitHub", to: "/github", hint: "Connect GitHub and create a repo" },
 ] as const;
 
 export function AppShell({
