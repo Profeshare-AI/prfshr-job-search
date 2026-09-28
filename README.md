@@ -170,7 +170,6 @@ other is "the listing says nothing". Both lower the score, neither is hidden.
 | `/dashboard` | protected | Personal workspace — greeting, session panel, prompt composer, "how PROFESHARE read your request", ranked result cards |
 | `/browse` | protected | Catalog — newest live listings with filtering, plus a plain-English hand-off |
 | `/jobs/:id` | protected | Detail page — score, apply-confidence breakdown, preview, source record, Apply |
-| `/github` | protected | GitHub connection — link an account, create a repository, browse existing ones |
 | `*` | public | 404 |
 
 Protected routes use the shared `RequireAuth` wrapper, which states the block on the page
@@ -337,7 +336,6 @@ Convex deployment (server-side, read with `process.env` inside actions):
 | `ADZUNA_APP_ID` | no | Adzuna app id — enables the India index |
 | `ADZUNA_APP_KEY` | no | Adzuna app key, from the same registration |
 | `VLY_INTEGRATION_KEY` | no | Alternative built-in AI gateway, used automatically when present |
-| `GITHUB_TOKEN` | no | GitHub personal access token (`repo` scope) — powers the GitHub connection at `/github` |
 
 Set a Convex environment variable with:
 
@@ -347,7 +345,6 @@ bun convex env set FRANCE_TRAVAIL_CLIENT_ID <your-client-id>
 bun convex env set FRANCE_TRAVAIL_CLIENT_SECRET <your-client-secret>
 bun convex env set ADZUNA_APP_ID <your-app-id>
 bun convex env set ADZUNA_APP_KEY <your-app-key>
-bun convex env set GITHUB_TOKEN <your-github-token>
 ```
 
 Never commit secrets, and never expose a server key to the client — the model calls all run
@@ -584,9 +581,9 @@ Rules for anyone working in this repository:
 - **Do not modify** `src/convex/auth.config.ts`, `src/convex/auth.ts`,
   `src/convex/auth/emailOtp.ts`, or anything in `src/convex/_generated/`. Regenerate the
   latter with `bun convex dev --once`, never by hand.
-- **External calls belong in `"use node"` Convex actions.** `src/convex/jobs/search.ts`
-  (job boards) and `src/convex/github/connect.ts` (GitHub REST) are the only such files; they
-  export actions only, and the boards in `providers/` are only ever reached from `search.ts`.
+- **External calls belong in `"use node"` Convex actions.** `src/convex/jobs/search.ts` is the
+  only file that exports actions; `src/convex/jobs/llm.ts` is the `"use node"` helper it imports
+  for the model call. The boards in `providers/` are only ever reached from `search.ts`.
 - **Every board implements `JobSource`** and must not throw for a partial failure: return what
   you got and put the reason in `note`. A source must never know about the scorer, and the
   scorer must never know about sources.

@@ -249,3 +249,60 @@ would get us blocked. The findings that changed decisions:
   required"*) still needs a written answer before we scale on their data.
 - Reed (UK) remains the cheapest real coverage win, and SmartRecruiters/Ashby the cheapest
   keyless ATS additions — both still unimplemented.
+
+---
+
+## 2026-09-28 (session 4) — removed the GitHub console from the product
+
+**Why** — `/github` was an operator tool that had been sitting in the app's top navigation as
+though it were a product feature. It was structurally single-tenant: `getConnection` called
+GitHub's `/user` with the *deployment's* token, so it always resolved to the token owner and
+never the viewer. `listRepos` asked for `affiliation=owner,collaborator,organization_member`, and
+`createRepo` created repositories in that same account.
+
+The gate was `RequireAuth`, which only checks `isAuthenticated` — and **a guest session counts as
+authenticated**. Any visitor who continued as guest could therefore see the token owner's
+profile, the names and descriptions of private repositories, and create repositories in that
+account. Authorization lived in the route rather than the actions, so the actions stayed callable
+directly by any signed-in client even if the page were hidden.
+
+None of that belongs in a job-search product. The page's one real job — create the repository so
+the team can clone it — was finished on 2026-09-26.
+
+**Changed**
+
+- `src/pages/GitHub.tsx` — deleted.
+- `src/convex/github/connect.ts` — deleted, along with the directory. The
+  `getConnection` / `listRepos` / `createRepo` actions no longer exist.
+- `src/components/AppShell.tsx` — the `github` entry removed from `NAV`.
+- `src/main.tsx` — the lazy `GitHubPage` import and the `/github` route removed.
+- `README.md` — the `/github` route row, the `GITHUB_TOKEN` row in the env table, the
+  `bun convex env set GITHUB_TOKEN` line, and the `"use node"` guardrail sentence (which named
+  `connect.ts` as one of only two such files) all removed.
+
+**Verified**
+
+- `bun convex dev --once` → clean, and `github` no longer appears in
+  `src/convex/_generated/api.d.ts`.
+- `bun tsc -b --noEmit` → exit 0. `bun test` → **258 pass, 0 fail**, 625 assertions.
+- `grep -rn 'GitHubPage|/github|github/connect|"github"' src` → no matches.
+
+**Decisions**
+
+- **The GitHub push path is untouched.** `.vly-run/github-sync.mjs` runs as a Node script in this
+  sandbox and reads the token through `bun convex env get GITHUB_TOKEN`; it never called the
+  deleted actions. The page and the sync shared exactly one thing — the *value* of `GITHUB_TOKEN`
+  in the deployment environment — and nothing else. Removing the page changes no part of a push.
+- **`GITHUB_TOKEN` stays in the deployment environment** so the sync keeps working. No
+  application code reads it any more.
+- **History was not rewritten.** `connect.ts` holds no secret — it reads the token from
+  `process.env` — so purging those files from earlier commits would buy no security, while
+  force-pushing `main` would invalidate every teammate's clone and orphan the open PR #2.
+
+**Open**
+
+- Rotate `GITHUB_TOKEN` down to a fine-grained token scoped to `Profeshare-AI/prfshr-job-search`
+  only. Anything that could read the old token — the running page, a screenshot, a log — can
+  still use it until it is rotated.
+- `.vly-run/github-sync.mjs` needed a `--delete=` flag to perform this removal: it builds trees
+  with `base_tree`, so a file deleted locally is *preserved* upstream unless named explicitly.
