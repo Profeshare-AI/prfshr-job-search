@@ -122,13 +122,15 @@ export default function Dashboard() {
             <dl className="divide-y-2 divide-nb-line/10">
               <SessionRow label="Signed in as" value={user?.email ?? user?.name ?? "Guest"} />
               <SessionRow label="Listings held in this tab" value={String(cachedCount)} />
-              <SessionRow label="Stored on our servers" value="Nothing" />
+              <SessionRow label="Stored about you" value="Nothing" />
+              <SessionRow label="Public listings cached" value="Yes, not yours" />
             </dl>
             <div className="border-t-2 border-dashed border-nb-line/20 px-4 py-3">
               <p className="text-xs leading-5 text-nb-line/60">
-                Version 1 keeps no account database. Your results live in this tab
-                only, which is also why saved searches and email alerts are not part
-                of it yet.
+                Version 1 keeps no account database — nothing about you is stored, which
+                is also why saved searches and email alerts are not part of it yet. Board
+                listings are cached so a search does not re-ask the same board for the
+                same page twice; that cache holds public postings only.
               </p>
             </div>
           </section>

@@ -183,3 +183,69 @@ part of the hosting decision above, not a five-minute change.
 - **Deeper research owed on hosting and scaling** — a full comparison of the options
   (limits per tier, cost at each step, migration effort, what breaks when we move), to be done
   once CI and the PR-based sync are in place.
+
+---
+
+## 2026-09-28 (session 3) — provider limits, request budgets, and the shared cache
+
+**Research first** — `API-LIMITS.md` (new) documents every provider ceiling, its source, and what
+would get us blocked. The findings that changed decisions:
+
+- **Adzuna's binding limit is the month, not the day:** 25/min · 250/day · 1 000/week ·
+  **2 500/month**, which is ~83/day sustained rather than 250.
+- **France Travail publishes 10 calls/second** and no daily quota — our most generous source.
+- **Most sources are freshness-limited, not quota-limited:** Himalayas regenerates every 24 h and
+  Jobicy asks not to be polled more than once an hour, so per-search polling buys identical bytes.
+- **Key rotation is off the table**, confirmed by Adzuna's own terms: *"Creation of multiple
+  accounts for a single entity or individual will immediately be considered misuse and a breach
+  of these terms and conditions."* The keyless sources have no accounts to rotate, so the
+  equivalent there would be proxy rotation — deliberate evasion, and worse. The legitimate
+  version is BYOK (the user's own key), or simply asking Adzuna, who invite limit increases.
+- **Jooble is not an option:** 500 requests *lifetime* per free key, not monthly.
+
+**Changed**
+
+- `src/convex/jobs/limits.ts` (new) — the pure half: published and self-imposed ceilings per
+  source, a 20 % margin we never spend, UTC-aligned windows, cache TTLs taken from each
+  provider's cadence, per-source cache keys, and the sentences a source report prints when it is
+  out of budget.
+- `src/convex/jobs/budget.ts` (new) — `reserve` / `settle`, `reserveUser`, and a `snapshot`
+  query. Reservations are transactional, so concurrent searches cannot both spend the last
+  request in a window; a `429` or `403` puts a source in cooldown with capped exponential
+  backoff.
+- `src/convex/jobs/cache.ts` (new) — `read` / `claim` / `write` / `abandon`, plus `purge` (an ops
+  tool for after a normalizer change) and `sweep`.
+- `src/convex/schema.ts` — four tables: `sourceBudget`, `sourceHealth`, `sourceCache`, `userUsage`.
+- `src/convex/jobs/providers/index.ts` — `loadPool` takes an injectable `PoolGate`, so the fan-out
+  stays testable and the cache/lease/budget logic is supplied in production only.
+- `src/convex/jobs/search.ts` — the ctx-backed gate, a per-user limit (20 searches/hour), and
+  single-listing lookups charged to the budget of the source that owns the id.
+- `README.md`, `src/pages/Dashboard.tsx` — the "nothing is stored server-side" claim is now the
+  honest version: no account database, but there *is* a shared public-listing cache.
+
+**Verified** (live, against the deployment)
+
+- `bun tsc -b --noEmit` → exit 0. `bun test` → **258 pass, 0 fail**, 625 assertions (was 235; 23
+  new tests cover window math, margins, cache keys, id→source mapping and report strings).
+- Cache miss → hit: *"data science intern in Paris"* spent 2 + 2 + 1 + 3 + 24 requests across
+  Arbeitnow, Himalayas, Jobicy, France Travail and Greenhouse/Lever, and the **identical query
+  immediately afterwards spent zero** — every source reported `served from cache`, status `ok`,
+  0 requests.
+- Narrow keys doing their job: *"data analyst jobs in Berlin"* then *"warehouse operative jobs
+  in Berlin"* — a completely different keyword, same country — reused Arbeitnow, Himalayas and the
+  employer boards from cache (0 requests), because those boards do not read the keyword.
+- Budgets moving and refusing correctly: Jobicy reported *"has spent its hour request budget
+  (1/1); resets in 22m"* and the snapshot showed `hour 1/1`; Greenhouse/Lever `hour 48/96`;
+  Adzuna correctly stayed at zero because no search had been about India.
+- Three bugs were found by these live runs, not by the tests: an expected cost larger than the
+  smallest allowance refused Jobicy forever (fixed by clamping the reservation and returning
+  `charged`), declined outcomes were being cached as if they were answers (fixed: only
+  `requests > 0` is cacheable), and cached hits were reported as `partial` (fixed by judging a
+  cache hit on what the original fetch said).
+
+**Open**
+
+- Adzuna's commercial-licensing question (14-day trial, then *"a licence agreement may be
+  required"*) still needs a written answer before we scale on their data.
+- Reed (UK) remains the cheapest real coverage win, and SmartRecruiters/Ashby the cheapest
+  keyless ATS additions — both still unimplemented.
