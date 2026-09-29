@@ -1,9 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="ClearRoute">
   <!--
     The ClearRoute mark, matching the wordmark glyph in the nav bar: a flat amber
-    tile, a dark 2px-equivalent outline and a bold "C". Drawn as geometry rather
-    than text so it renders identically at 16px with no webfont loaded, and with
-    a fixed palette so it stays legible on both light and dark browser chrome.
+    tile, a dark outline and a bold "C". Drawn as geometry rather than text so it
+    renders identically at 16px with no webfont loaded, and with a fixed palette
+    so it stays legible on both light and dark browser chrome.
+
+    Deliberately a new URL (`/favicon.svg`), not the old `/logo.svg`: browsers
+    cache favicons in a separate store keyed by URL and often survive even a hard
+    reload, so a changed path is what actually replaces a stale icon.
 
     Tile:   #ffd34d  (--nb-amber)
     Outline + letter: #0c0c0e  (--nb-deep)

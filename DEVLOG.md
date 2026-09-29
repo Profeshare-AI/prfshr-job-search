@@ -328,6 +328,15 @@ name in `bun.lock` brought in line with it (it had drifted to `prfshr-opportunit
 `package.json` said `profeshare-…`), the README clone directory, and the product title inside
 `LICENSE`.
 
+*Favicon and auth text.* `public/logo.svg` was still the platform's own artwork (a dark rounded
+square with four white bars); it now holds the ClearRoute mark — the amber tile, dark outline and
+bold `C` from the nav glyph, drawn as vector geometry because favicons render without webfonts
+and a `<text>` letter would fall back inconsistently at 16px. It uses a fixed dark outline rather
+than the theme-flipping `nb-line`, so it reads on light and dark browser chrome alike. Both
+references (`index.html`'s `<link rel="icon">` and the manifest icons) already pointed at that
+path, and there is no runtime favicon injection anywhere in the shell. In the sign-in path, the
+OTP email's `appName` fallback was `"a freebuff.com application"`; it is now `"ClearRoute"`.
+
 *Preference Fit.* The matching engine was rebuilt as `src/convex/jobs/preference.ts`, a pure
 module that reads the request into weighted preferences and evaluates each listing against them:
 
@@ -380,6 +389,10 @@ vague-vs-specific request guidance.
   GitHub org in the log's links and quoted commit subject.
 - `bun install --frozen-lockfile` → "Checked 392 installs across 461 packages (no changes)", so the
   package rename left the lockfile in sync. This is the exact check CI runs.
+- `bun .vly-run/verify-sync.mjs` → **147 files local, 147 remote, 0 differing, 0 local-only,
+  0 upstream-only** — the pushed branch is byte-identical to this tree.
+- PR [#4](https://github.com/Profeshare-AI/prfshr-job-search/pull/4) — 30 files,
+  `mergeable_state: clean`, CI `pull_request · codebuff/sync · completed success`.
 
 **Decisions**
 
@@ -403,7 +416,13 @@ vague-vs-specific request guidance.
 
 **Open**
 
-- Merge PR #3 (the `/github` console removal) — still open, still `mergeable_state: clean`.
+- PR [#4](https://github.com/Profeshare-AI/prfshr-job-search/pull/4) is open against `main`,
+  awaiting review. PR #3 merged first (`main` tip `fea222ab`), so `/github` was already gone
+  upstream and this branch needed no `--delete=` entries for the two removed files.
+- `VLY_APP_NAME` on the dev deployment is still set to `Job AI Search`, which **overrides** the new
+  `"ClearRoute"` fallback in `emailOtp.ts` — so the sign-in email still shows the old name until
+  that deployment variable is updated from the Keys/env surface (it is not a file, and .env is
+  off-limits).
 - Rotate `GITHUB_TOKEN` down to a fine-grained token scoped to `Profeshare-AI/prfshr-job-search`.
 - The labelled evaluation collection is still to come. The engine is built for it: pure
   functions, a per-facet `method`/`state` record, and a shadow comparison reporting rank
