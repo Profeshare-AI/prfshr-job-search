@@ -55,6 +55,38 @@ const VERDICTS: Array<{ min: number; label: string; tone: string; body: string }
   },
 ];
 
+/** The six states a preference can be in, and how each one reads. */
+const STATE_TONE: Record<string, string> = {
+  match: "bg-nb-green text-nb-deep",
+  partial: "bg-nb-amber text-nb-deep",
+  mismatch: "bg-nb-red text-nb-deep",
+  hardContradiction: "bg-nb-red text-nb-deep",
+  unknown: "bg-nb-surface2 text-nb-line",
+  notApplicable: "bg-nb-surface2 text-nb-line/60",
+};
+
+const STATE_LABEL: Record<string, string> = {
+  match: "match",
+  partial: "partly",
+  mismatch: "mismatch",
+  hardContradiction: "required, contradicted",
+  unknown: "not stated",
+  notApplicable: "not applicable",
+};
+
+const IMPORTANCE_NOTE: Record<string, string> = {
+  hard: "you made this a requirement",
+  strong: "you stated this strongly",
+  soft: "passing mention",
+};
+
+const METHOD_NOTE: Record<string, string> = {
+  deterministic: "rule check",
+  lexical: "exact wording",
+  taxonomy: "related title",
+  semantic: "related concept",
+};
+
 function Chip({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <span
@@ -163,9 +195,9 @@ export default function JobDetail() {
               This listing has left the board
             </p>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-nb-line/55">
-              PROFESHARE reads the newest live listings only, so older postings drop out
-              of view. Refresh the catalog or run a fresh search to see what replaced
-              it.
+              ClearRoute reads the newest live listings only, so older postings drop
+              out of view. Refresh the catalog or run a fresh search to see what
+              replaced it.
             </p>
             <Button
               asChild
@@ -308,6 +340,51 @@ export default function JobDetail() {
                         </div>
                       )}
 
+                      {/* Every conclusion, the listing text behind it, and which
+                          method produced it. This is the evidence the spec asks
+                          for, on the page rather than buried in a score. */}
+                      {scored.facets && scored.facets.length > 0 && (
+                        <div className="border-t-2 border-dashed border-nb-line/20 pt-4">
+                          <p className="font-mono text-[10px] tracking-[0.16em] text-nb-line/55 uppercase">
+                            Preference by preference
+                          </p>
+                          <ul className="mt-2 space-y-3">
+                            {scored.facets.map((facet) => (
+                              <li key={`${facet.area}-${facet.label}`} className="space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-bold text-nb-line">
+                                    {facet.label}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "nb-border px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase",
+                                      STATE_TONE[facet.state] ?? "bg-nb-surface2 text-nb-line",
+                                    )}
+                                  >
+                                    {STATE_LABEL[facet.state] ?? facet.state}
+                                  </span>
+                                  <span className="font-mono text-[9px] tracking-[0.1em] text-nb-line/40 uppercase">
+                                    {IMPORTANCE_NOTE[facet.importance] ?? facet.importance} ·{" "}
+                                    {METHOD_NOTE[facet.method] ?? facet.method}
+                                  </span>
+                                </div>
+                                <p className="text-xs leading-5 text-nb-line/70">{facet.detail}</p>
+                                {facet.evidence && (
+                                  <p className="border-l-2 border-nb-amber pl-2 text-[11px] leading-5 text-nb-line/55 italic">
+                                    “{facet.evidence}”
+                                  </p>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-3 text-[11px] leading-5 text-nb-line/55">
+                            A state belongs to a preference, not to the job. “Not stated”
+                            means the posting never provided the fact — that is not a
+                            mismatch, and it never earns points.
+                          </p>
+                        </div>
+                      )}
+
                       {scored.matchedQueries.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1.5 border-t-2 border-dashed border-nb-line/20 pt-4">
                           <span className="font-mono text-[10px] tracking-[0.16em] text-nb-line/55 uppercase">
@@ -328,8 +405,8 @@ export default function JobDetail() {
                     <div className="space-y-4 p-5">
                       <p className="text-sm leading-6 text-nb-line/60">
                         This listing was opened outside a search, so it has not been
-                        scored against what you are looking for. Describe your goal and
-                        PROFESHARE will rank it with the reasons attached.
+                        scored against what you are looking for.                        Describe your goal and
+                        ClearRoute will check it against every preference you name.
                       </p>
                       <form
                         onSubmit={(event) => {
@@ -411,6 +488,39 @@ export default function JobDetail() {
                         <p className="font-mono text-[10px] tracking-[0.14em] text-nb-line/55 uppercase">
                           Band: {scored.band}
                         </p>
+
+                        {/* Coverage is a separate number from the fit, on purpose. */}
+                        {scored.coverage !== undefined && (
+                          <div>
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="font-mono text-[10px] tracking-[0.14em] text-nb-line/55 uppercase">
+                                Information coverage
+                              </span>
+                              <span className="font-mono text-xs font-semibold text-nb-line">
+                                {scored.coverage}% · {scored.coverageLabel}
+                              </span>
+                            </div>
+                            <div className="mt-1 h-1.5 w-full border-2 border-nb-line bg-nb-deep">
+                              <div
+                                className="h-full bg-nb-line"
+                                style={{ width: `${scored.coverage}%` }}
+                              />
+                            </div>
+                            <p className="mt-1.5 text-[11px] leading-4 text-nb-line/55">
+                              How much of your request this posting actually let us check.
+                              A high fit on low coverage is a fit on thin evidence, and it
+                              is discounted accordingly.
+                            </p>
+                          </div>
+                        )}
+
+                        {scored.requestedPreferences !== undefined && (
+                          <p className="font-mono text-[10px] tracking-[0.1em] text-nb-line/50 uppercase">
+                            {scored.evaluated ?? 0} of {scored.requestedPreferences} preferences
+                            checkable · freshness not scored
+                            {scored.semanticUsed ? " · related-title matching contributed" : ""}
+                          </p>
+                        )}
                       </>
                     ) : (
                       <p className="text-xs leading-5 text-nb-line/55">
@@ -429,7 +539,7 @@ export default function JobDetail() {
                       </a>
                     </Button>
                     <p className="font-mono text-[10px] leading-4 text-nb-line/55 uppercase">
-                      Opens the original posting in a new tab. PROFESHARE never applies on
+                      Opens the original posting in a new tab. ClearRoute never applies on
                       your behalf.
                     </p>
                   </div>

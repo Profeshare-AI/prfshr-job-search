@@ -22,7 +22,9 @@ export const emailOtp = Email({
         {
           to: email,
           otp: token,
-          appName: process.env.VLY_APP_NAME || "a freebuff.com application",
+          // The name shown in the sign-in email, so it has to read as the product.
+          // `VLY_APP_NAME` wins when the deployment sets it; see the note in DEVLOG.
+          appName: process.env.VLY_APP_NAME || "ClearRoute",
         },
         {
           headers: {

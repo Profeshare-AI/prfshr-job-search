@@ -122,7 +122,7 @@ createRoot(document.getElementById("root")!).render(
         attribute="class"
         defaultTheme="system"
         enableSystem
-        storageKey="profeshare-theme"
+        storageKey="clearroute-theme"
         disableTransitionOnChange
       >
         <ConvexAuthProvider client={convex}>

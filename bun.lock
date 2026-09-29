@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "prfshr-opportunity-search",
+      "name": "clearroute-opportunity-search",
       "dependencies": {
         "@convex-dev/auth": "^0.0.90",
         "@hookform/resolvers": "^5.2.2",

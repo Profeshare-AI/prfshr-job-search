@@ -1,18 +1,20 @@
 "use node";
 
 /**
- * The PROFESHARE opportunity pipeline, in one place.
+ * The ClearRoute opportunity pipeline, in one place.
  *
  * Ranked search (natural-language prompt):
  *   1. understand the request   -> parseIntentRules + AI assist (mergeIntent)
- *   2. build search queries     -> generateSearchQueries
- *   3. fetch live listings      -> loadPool (seven sources, intent-aware)
- *   4. normalize                -> per-source normalizers in providers/
- *   5. remove duplicates        -> dedupeJobs
- *   6. mismatch / uncertainty / freshness -> scoreJob
- *   7. rank by relevance        -> scoreJob + sort
- *   8. explain each ranking     -> reasons on every result
- *   9./10. card + detail view, Apply opens the original posting
+ *   2. interpret preferences    -> interpretPreferences (areas, importance, mode)
+ *   3. build search queries     -> generateSearchQueries
+ *   4. fetch live listings      -> loadPool (seven sources, intent-aware)
+ *   5. normalize                -> per-source normalizers in providers/
+ *   6. remove duplicates        -> dedupeJobs
+ *   7. drop known-expired jobs  -> isExpiredJob (freshness, not fit)
+ *   8. evaluate preferences     -> scorePreferenceJob (Preference Fit + coverage)
+ *   9. rank by fit, tie-break on coverage then freshness -> compareScored
+ *  10. explain each ranking     -> facets with evidence on every result
+ *  11. card + detail view, Apply opens the original posting
  *
  * Catalog browse and the per-listing lookup reuse steps 3-5 without scoring,
  * because a listing means nothing until it is compared against a request.
@@ -41,6 +43,16 @@ import {
   parseIntentRules,
   scoreJob,
 } from "./rules";
+import { compareEngines, fitEngine, shadowComparisonEnabled } from "./flags";
+import {
+  compareScored,
+  diversifyByFamily,
+  interpretPreferences,
+  isExpiredJob,
+  isRelevantToPlan,
+  publicPreferences,
+  scorePreferenceJob,
+} from "./preference";
 import { normalizeQuery } from "./text";
 import {
   MAX_RESULTS,
@@ -48,6 +60,7 @@ import {
   catalogResultValidator,
   searchResultValidator,
   type CatalogJob,
+  type JobIntent,
   type JobMatch,
   type NormalizedJob,
   type ScoredJob,
@@ -143,6 +156,17 @@ function toJobMatch(scored: ScoredJob, now: number): JobMatch {
     reasons: scored.reasons,
     mismatches: scored.mismatches,
     uncertainties: scored.uncertainties,
+    // Preference Fit v2 detail. Absent when the legacy scorer answered.
+    ...(scored.coverage !== undefined ? { coverage: scored.coverage } : {}),
+    ...(scored.coverageLabel !== undefined ? { coverageLabel: scored.coverageLabel } : {}),
+    ...(scored.facets ? { facets: scored.facets } : {}),
+    ...(scored.hardContradictions ? { hardContradictions: scored.hardContradictions } : {}),
+    ...(scored.semanticUsed !== undefined ? { semanticUsed: scored.semanticUsed } : {}),
+    ...(scored.evaluated !== undefined ? { evaluated: scored.evaluated } : {}),
+    ...(scored.requestedPreferences !== undefined
+      ? { requestedPreferences: scored.requestedPreferences }
+      : {}),
+    ...(scored.searchMode ? { searchMode: scored.searchMode } : {}),
   };
 }
 
@@ -176,26 +200,62 @@ export const searchJobs = action({
       if (!quota.ok) throw new ConvexError(quota.reason);
     }
 
-    // Steps 1 + 2 — understand, then turn it into queries. The rules engine is
-    // the safety net; the model only refines what it produced.
+    // Steps 1 + 2 — understand, then read the preferences out of it. The rules
+    // engine is the safety net; the model only refines what it produced.
     const baseDraft = parseIntentRules(query, now);
     const llm = await extractIntentWithLLM(query, baseDraft);
-    const intent = mergeIntent(baseDraft, llm, query);
+    const merged = mergeIntent(baseDraft, llm, query);
+    const plan = interpretPreferences(merged, query, now);
+    const intent: JobIntent = {
+      ...merged,
+      searchMode: plan.mode,
+      preferences: publicPreferences(plan),
+      ...(plan.guidance ? { guidance: plan.guidance } : {}),
+    };
 
-    // Steps 3-5 — live pool, shaped by what was actually asked for. The gate
+    // Steps 3-6 — live pool, shaped by what was actually asked for. The gate
     // serves from cache when it can, leases when two searches race for the same
     // key, and refuses when a source's allowance is spent.
     const pool = await loadLivePool(intent, now, gateFor(ctx));
     assertPoolUsable(pool);
 
-    // Steps 6 + 7 — signals, score, rank.
-    const scored = pool.jobs
-      .map((job) => scoreJob(job, intent, now))
-      .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    // Step 7 — freshness is a fact about the listing, not part of the fit, so a
+    // job we know is closed is removed rather than scored. An unknown date is
+    // never treated as stale.
+    const liveJobs = pool.jobs.filter((job) => !isExpiredJob(job, now));
+    const expiredDropped = pool.jobs.length - liveJobs.length;
 
-    const relevant = scored.filter((job) => isRelevant(job, intent));
+    // Steps 8 + 9 — Preference Fit, then rank. The legacy scorer stays available
+    // behind PREFERENCE_FIT_ENGINE=v1 so the two can be compared on live pools.
+    const engine = fitEngine();
+    const scored =
+      engine === "v2"
+        ? liveJobs.map((job) => scorePreferenceJob(job, plan, now))
+        : liveJobs.map((job) => scoreJob(job, intent, now));
+    const sorted = [...scored].sort(
+      engine === "v2" ? compareScored : (a, b) => b.score - a.score || a.title.localeCompare(b.title),
+    );
+
+    // A hard contradiction only exists when the user was explicit about the
+    // requirement, so a listing carrying one is dropped rather than demoted.
+    const respectingHardConstraints = sorted.filter((job) => !job.hardContradictions?.length);
+    const hardConstraintsDropped = sorted.length - respectingHardConstraints.length;
+
+    const relevant = respectingHardConstraints.filter((job) =>
+      engine === "v2" ? isRelevantToPlan(job, plan) : isRelevant(job, intent),
+    );
     const confident = relevant.length >= CONFIDENT_MATCH_FLOOR;
-    const ranked = (confident ? relevant : scored).slice(0, MAX_RESULTS);
+    const shortlist = confident ? relevant : respectingHardConstraints;
+    // Domain exploration should show several related job families, not eight
+    // spellings of one title.
+    const ordered = engine === "v2" ? diversifyByFamily(shortlist, plan.mode) : shortlist;
+    const ranked = ordered.slice(0, MAX_RESULTS);
+
+    if (shadowComparisonEnabled()) {
+      // Development aid: score the same pool with both engines and report how
+      // far apart they land. Never shown to the user.
+      console.log("[clearroute] preference-fit shadow", compareEngines(pool.jobs, intent, plan, now).report);
+    }
 
     return {
       query,
@@ -206,7 +266,9 @@ export const searchJobs = action({
         sources: pool.reports,
         poolScanned: pool.scanned,
         duplicatesRemoved: pool.duplicatesRemoved,
-        obviousMismatchesDropped: confident ? pool.jobs.length - relevant.length : 0,
+        obviousMismatchesDropped: confident ? respectingHardConstraints.length - relevant.length : 0,
+        hardConstraintsDropped,
+        expiredDropped,
         returned: ranked.length,
         maxResults: MAX_RESULTS,
         lowConfidence: !confident,

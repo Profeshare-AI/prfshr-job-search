@@ -32,10 +32,10 @@ const fadeUp = {
 };
 
 const STATS = [
-  { value: "50", label: "results max", hint: "best first, never a dump" },
-  { value: "07", label: "live job boards", hint: "France, India and Europe" },
-  { value: "00", label: "account database", hint: "your search stays in the tab" },
-  { value: "10", label: "pipeline steps", hint: "parse, fetch, rank, explain" },
+  { value: "100", label: "results max", hint: "best first, never a dump" },
+  { value: "07", label: "live job boards", hint: "fetched live, never a mirror" },
+  { value: "00", label: "résumé uploads", hint: "this is preference fit only" },
+  { value: "06", label: "match states", hint: "match, partial, unknown, more" },
 ];
 
 const ENTRY_POINTS = [
@@ -43,7 +43,7 @@ const ENTRY_POINTS = [
     icon: Sparkles,
     step: "01",
     title: "Describe the role",
-    body: "One sentence is the whole interface. PROFESHARE reads the role, level, location, start date, work mode and skills, then shows you exactly how it read you.",
+    body: "One sentence is the whole interface. ClearRoute reads the roles, field, location, work mode, contract and language you mention, and shows you exactly how it read you.",
     cta: { label: "Search by prompt", to: AUTH_SEARCH },
   },
   {
@@ -57,7 +57,7 @@ const ENTRY_POINTS = [
     icon: BadgeCheck,
     step: "03",
     title: "Apply with confidence",
-    body: "Open a listing for its full breakdown: what lines up, what conflicts, and what the posting never told us — then finish the application on the source page.",
+    body: "Open a listing for its full breakdown: what lines up, what partly fits, what conflicts, and what the posting never told us — then finish the application on the source page.",
     cta: { label: "See a sample breakdown", to: AUTH_SEARCH },
   },
 ];
@@ -66,7 +66,7 @@ const PIPELINE = [
   {
     icon: Sparkles,
     title: "Read the request",
-    body: "Your sentence is parsed into role, skills, location, level, start date and language. No filters to click through first.",
+    body: "Your sentence is read into preferences — role, field, location, work mode, contract, pay, language — each marked as a requirement, a preference or a passing mention. No filters to click through first.",
   },
   {
     icon: Filter,
@@ -85,44 +85,63 @@ const PIPELINE = [
   },
   {
     icon: ShieldAlert,
-    title: "Flag mismatch and doubt",
-    body: "Wrong city, wrong level, unstated skills, a stale posting date: every conflict is named instead of hidden behind a relevance score.",
+    title: "Judge each preference",
+    body: "Every preference gets a state: match, partial, mismatch, a hard contradiction, or unknown when the listing simply does not say. Missing information is never counted as a match.",
   },
   {
     icon: Link2,
     title: "Rank, explain, apply",
-    body: "Each listing gets a 0-100 score with its reasons attached, and Apply takes you to the original posting page.",
+    body: "Preference Fit is the headline number and information coverage sits beside it. Freshness is shown separately and only breaks ties. Every card carries the listing text behind its result.",
   },
 ];
 
 const SIGNALS = [
   {
+    label: "Match",
+    marker: "✓",
+    className: "bg-nb-green text-nb-deep",
+    body: "The listing states something that clearly answers the preference: the same title, the city you named, the contract type you asked for.",
+  },
+  {
+    label: "Partial match",
+    marker: "~",
+    className: "bg-nb-amber text-nb-deep",
+    body: "Related rather than exact: a sibling job title, an adjacent work mode, or the right country but a different city. Never rejected for using different words.",
+  },
+  {
     label: "Mismatch",
     marker: "!",
     className: "bg-nb-red text-nb-deep",
-    body: "Something in the listing contradicts your request: a different city, a senior title on a student search, or full-time work when you asked for an internship.",
+    body: "The listing states something that does not line up with a preference you stated: a different country, or full-time work when you asked for an internship.",
   },
   {
-    label: "Uncertainty",
+    label: "Hard contradiction",
+    marker: "×",
+    className: "bg-nb-red text-nb-deep",
+    body: "Reserved for requirements you made explicit — “remote only”, “no temporary contracts”. These listings are taken out of the results, not ranked low.",
+  },
+  {
+    label: "Unknown",
     marker: "?",
     className: "bg-nb-surface2 text-nb-line",
-    body: "Something the listing never told us: no posting date, no stated level, or a description too short to verify the skills you asked for.",
+    body: "The listing never provided the information. An unstated language, level or schedule is neither a match nor a mismatch, and it never earns points.",
   },
   {
-    label: "Freshness",
-    marker: "◷",
-    className: "bg-nb-blue text-nb-deep",
-    body: "How old the posting is, straight from the board. Fresh listings score higher, and older ones are marked as possibly filled.",
+    label: "Not applicable",
+    marker: "–",
+    className: "bg-nb-surface2 text-nb-line",
+    body: "The preference simply does not apply here — a city requirement on a fully remote posting, for example. It is shown, never silently dropped.",
   },
 ];
 
 const SCORING = [
-  { factor: "Role and domain fit", points: "34" },
-  { factor: "Skills you named", points: "20" },
-  { factor: "Location and work mode", points: "18" },
-  { factor: "Level and contract type", points: "12" },
-  { factor: "Posting freshness", points: "8" },
-  { factor: "English-friendly", points: "8" },
+  { factor: "Requirements you made explicit", points: "weight 3" },
+  { factor: "Preferences you stated", points: "weight 2" },
+  { factor: "Ordinary mentions", points: "weight 1" },
+  { factor: "Location · work mode · contract · dates · language", points: "rules" },
+  { factor: "Related titles, families and translations", points: "taxonomy" },
+  { factor: "Missing information", points: "no penalty" },
+  { factor: "Freshness", points: "separate" },
 ];
 
 export default function Landing() {
@@ -190,10 +209,11 @@ export default function Landing() {
             </h1>
 
             <p className="mt-5 max-w-xl text-base leading-7 text-nb-line/60">
-              PROFESHARE reads your request the way a recruiter would — role, level,
-              location, start date, skills — then pulls live listings from the open
-              web and scores every one of them. Each card tells you exactly why it
-              ranked where it did.
+              ClearRoute reads your request the way a recruiter would — role, field,
+              location, work mode, contract, language — then pulls live listings from
+              the open web and checks each one against every preference you stated.
+              Each card shows what matched, what only partly fits, and what the
+              posting never told us.
             </p>
 
             <p className="mt-5 max-w-xl border-l-2 border-nb-amber bg-nb-surface p-3 text-sm leading-6 text-nb-line/70">
@@ -383,7 +403,7 @@ export default function Landing() {
               Honest by default
             </p>
             <h2 className="mt-3 font-display text-3xl leading-[1.03] text-nb-line uppercase sm:text-4xl">
-              A job board tells you what exists. PROFESHARE tells you what does not fit.
+              A job board gives you a list. ClearRoute tells you how each job answers your request.
             </h2>
           </motion.div>
 
@@ -420,10 +440,11 @@ export default function Landing() {
                 Why every score is explainable
               </h3>
               <p className="mt-3 text-sm leading-6 text-nb-line/55">
-                Ranking is weighted scoring, not a black box. Each facet carries a
-                maximum number of points, partial matches earn less than their linear
-                share, and conflicts subtract. The card shows the point value next to
-                every reason.
+                Preference Fit is not a black box and it is not an embedding number.
+                Each preference you stated is checked on its own, weighted by how
+                strongly you stated it, and every conclusion carries the listing text
+                behind it. Information coverage is reported separately, so a strong fit
+                on thin evidence reads as exactly that.
               </p>
             </div>
             <ul>
@@ -434,7 +455,7 @@ export default function Landing() {
                 >
                   <span className="text-sm font-medium text-nb-line/80">{row.factor}</span>
                   <span className="nb-border bg-nb-amber px-2 py-0.5 font-mono text-xs font-semibold text-nb-deep">
-                    {row.points} pts
+                    {row.points}
                   </span>
                 </li>
               ))}
@@ -455,18 +476,18 @@ export default function Landing() {
                 Version 1 scope
               </p>
               <h2 className="mt-3 font-display text-2xl leading-tight text-nb-line uppercase">
-                Seven boards, one ranked answer — plus a prompt-to-rank engine.
+                Seven boards, one ranked answer — scored preference by preference.
               </h2>
               <p className="mt-4 text-sm leading-6 text-nb-line/55">
-                This first version does four things and nothing else: browse and
-                filter a live catalog, search it with a natural-language prompt, open
-                a single listing for its full breakdown, and send you to the original
-                posting to apply. Every board it asked is listed with the search, so
-                you can see what came back and what did not. No saved searches, no
-                email digests, no account database.
+                This version does four things and nothing else: browse and filter a
+                live catalog, search it with a natural-language prompt, open a single
+                listing for its full Preference Fit breakdown, and send you to the
+                original posting to apply. Every board it asked is listed with the
+                search, so you can see what came back and what did not. No saved
+                searches, no email digests, no résumé upload.
               </p>
               <div className="mt-5 flex flex-wrap gap-2">
-                {["Max 50 results", "Stateless", "Live listings"].map((tag) => (
+                {["Max 100 results", "Stateless", "Live listings"].map((tag) => (
                   <span
                     key={tag}
                     className="nb-border bg-nb-deep px-2.5 py-1 font-mono text-[10px] tracking-[0.12em] text-nb-line/70 uppercase"
@@ -483,12 +504,12 @@ export default function Landing() {
                   In scope
                 </h3>
                 <ul className="mt-2 space-y-1.5 text-xs leading-5 text-nb-line/60">
-                  <li>· Read a free-text request and show how it was read.</li>
+                  <li>· Read a free-text request into weighted preferences and show how it was read.</li>
                   <li>· Turn it into queries, then fetch, normalize and de-duplicate.</li>
-                  <li>· Flag mismatch, uncertainty and freshness on every listing.</li>
-                  <li>· Rank 0-100 with a written reason per result.</li>
+                  <li>· Check every listing against every preference, with six possible states.</li>
+                  <li>· Score Preference Fit and report information coverage beside it.</li>
+                  <li>· Carry the listing evidence behind each conclusion.</li>
                   <li>· Browse the same live catalog without a prompt.</li>
-                  <li>· Open a detail page and apply on the original posting.</li>
                 </ul>
               </div>
               <div className="nb-border bg-nb-deep p-4">
@@ -497,8 +518,9 @@ export default function Landing() {
                   Deliberately out
                 </h3>
                 <ul className="mt-2 space-y-1.5 text-xs leading-5 text-nb-line/55">
+                  <li>· Profile Fit — matching your experience and qualifications. Deferred.</li>
+                  <li>· Résumé upload, parsing or CV scoring of any kind.</li>
                   <li>· Saved searches, alerts and email digests.</li>
-                  <li>· Résumé parsing, CV matching or application tracking.</li>
                   <li>· Storing your history, profile or documents on a server.</li>
                 </ul>
               </div>
@@ -534,8 +556,7 @@ export default function Landing() {
       {/* Footer ------------------------------------------------------------- */}
       <footer className="nb-border-t bg-nb-deep">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-6">
-          {/* The footer is the one place the brand carries "AI" (see BrandMark). */}
-          <BrandMark to="/" ai />
+          <BrandMark to="/" />
           <p className="max-w-xl text-xs leading-5 text-nb-line/55">
             Live listings from{" "}
             {SOURCE_CREDITS.map((credit, index) => (
@@ -551,7 +572,7 @@ export default function Landing() {
                 </a>
               </span>
             ))}{" "}
-            · PROFESHARE ranks and explains; it never applies on your behalf and never
+            · ClearRoute ranks and explains; it never applies on your behalf and never
             stores your search.
           </p>
         </div>
@@ -562,12 +583,13 @@ export default function Landing() {
 
 /** A static, honest sample of a real result card. */
 function HeroCard() {
+  // Every state the engine can produce, shown on one honest sample card.
   const reasons = [
-    { label: "Role fit", detail: "Matches your focus on data, machine learning.", weight: "+28" },
-    { label: "Location fit", detail: "Based in Paris, France — matches your target.", weight: "+18" },
-    { label: "Level fit", detail: "Listed as internship — the level you asked for.", weight: "+12" },
-    { label: "Skills seen", detail: "Mentions Python from your query.", weight: "+10" },
-  ];
+    { state: "match", label: "Role fit", detail: "the title itself is Data Scientist Intern." },
+    { state: "match", label: "Location", detail: "Paris — the city you named." },
+    { state: "match", label: "Contract type", detail: "listed as an internship." },
+    { state: "partial", label: "Skills you named: partly", detail: "Python is mentioned; SQL is not stated anywhere." },
+  ] as const;
 
   return (
     <div className="nb-border nb-shadow-xl bg-nb-surface">
@@ -588,6 +610,9 @@ function HeroCard() {
           </span>
           <span className="nb-border bg-nb-amber px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.08em] text-nb-deep uppercase">
             Good match
+          </span>
+          <span className="nb-border bg-nb-surface2 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.08em] text-nb-line/70 uppercase">
+            Coverage 75%
           </span>
         </div>
         <span className="font-mono text-sm font-semibold text-nb-line">
@@ -619,16 +644,20 @@ function HeroCard() {
 
         <div>
           <p className="font-mono text-[10px] tracking-[0.18em] text-nb-line/55 uppercase">
-            Why this ranks here
+            Preference by preference
           </p>
           <ul className="mt-2 space-y-1.5">
             {reasons.map((reason) => (
               <li key={reason.label} className="flex gap-2">
-                <span className="nb-border mt-[5px] size-2.5 shrink-0 bg-nb-green" />
+                <span
+                  className={cn(
+                    "nb-border mt-[5px] size-2.5 shrink-0",
+                    reason.state === "match" ? "bg-nb-green" : "bg-nb-amber",
+                  )}
+                />
                 <span className="text-xs leading-5 text-nb-line/80">
                   <span className="font-bold text-nb-line">{reason.label}</span>
                   <span className="text-nb-line/60"> — {reason.detail}</span>
-                  <span className="ml-1 font-mono text-[10px] text-nb-amber">{reason.weight}</span>
                 </span>
               </li>
             ))}
@@ -636,11 +665,11 @@ function HeroCard() {
         </div>
 
         <div className="flex flex-wrap gap-1.5">
-          <span className="nb-border bg-nb-red px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.06em] text-nb-deep uppercase">
-            ! No mention of SQL
+          <span className="nb-border bg-nb-surface2 px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.06em] text-nb-line uppercase">
+            ? The listing never states a language — not counted as a match
           </span>
-          <span className="nb-border bg-nb-surface2 px-2 py-1 font-mono text-[10px] text-nb-line/55">
-            ? Start date not confirmed
+          <span className="nb-border bg-nb-amber px-2 py-1 font-mono text-[10px] font-semibold tracking-[0.06em] text-nb-deep uppercase">
+            Fresh · posted today
           </span>
         </div>
       </div>

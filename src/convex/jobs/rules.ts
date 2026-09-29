@@ -1,5 +1,5 @@
 /**
- * Deterministic engine behind the PROFESHARE opportunity search.
+ * Deterministic engine behind the ClearRoute opportunity search.
  *
  * Everything here is pure and side-effect free so the product still works
  * end-to-end when the language model is unavailable. The LLM only ever *adds*
@@ -258,7 +258,7 @@ const PLACE_TUPLES: PlaceTuple[] = [
   ["South Africa", "South Africa", "country", ["south africa"]],
 ];
 
-interface Place {
+export interface Place {
   canonical: string;
   country: string;
   kind: PlaceKind;
@@ -298,7 +298,7 @@ export function canonicalizeLocation(raw: string): string | undefined {
   return undefined;
 }
 
-function findPlace(name: string): Place | undefined {
+export function findPlace(name: string): Place | undefined {
   return PLACES_BY_NAME.get(normalizeText(name));
 }
 
@@ -375,7 +375,7 @@ export function canonicalJobTypes(rawTypes: string[]): JobType[] {
   return out;
 }
 
-const SKILLS = [
+export const SKILLS = [
   "python", "sql", "r", "excel", "javascript", "typescript", "java", "c++", "c#", "go", "rust",
   "scala", "kotlin", "swift", "php", "ruby", "matlab", "sas", "spss", "stata",
   "pandas", "numpy", "scikit-learn", "tensorflow", "pytorch", "keras", "spark", "pyspark",
@@ -389,7 +389,7 @@ const SKILLS = [
   "seo", "salesforce", "sap", "erp", "crm", "product analytics", "uipath", "power automate",
 ];
 
-const DOMAIN_TERMS = [
+export const DOMAIN_TERMS = [
   "data science", "data scientist", "data engineering", "data engineer", "data analyst",
   "data analysis", "analytics", "business intelligence", "machine learning", "artificial intelligence",
   "deep learning", "nlp", "computer vision", "ai", "ml", "data", "research", "robotics",
@@ -439,6 +439,12 @@ export interface IntentDraft {
   startAfter?: string;
   remotePreference: "remote" | "hybrid" | "onsite" | "any";
   englishFriendly: boolean;
+  /**
+   * Related titles and concepts the model expanded the request into. This is the
+   * "semantic" half of Preference Fit: it is what lets a listing using a
+   * different but related title still count as a partial match.
+   */
+  related?: string[];
 }
 
 const MONTHS: Record<string, number> = {
@@ -678,6 +684,7 @@ export function mergeIntent(
     englishFriendly: merge.englishFriendly,
     ...(merge.startAfter ? { startAfter: merge.startAfter } : {}),
     understoodBy: llm ? `AI assistant (${llm.provider}) + built-in rules` : "built-in rules engine",
+    semanticTerms: unique([...(llm?.draft.related ?? [])]).slice(0, 8),
     // Only present when the model answered *and* reported its spend. Backs the
     // budget readout in the intent panel.
     ...(llm?.usage ? { ai: { provider: llm.provider, ...llm.usage } } : {}),
@@ -746,7 +753,7 @@ export function describeFreshness(
 /*  Steps 6-8 — mismatch, uncertainty, ranking and the "why"                  */
 /* -------------------------------------------------------------------------- */
 
-const RELATED_TYPES: Record<JobType, JobType[]> = {
+export const RELATED_TYPES: Record<JobType, JobType[]> = {
   internship: ["working-student", "apprenticeship", "part-time"],
   "working-student": ["internship", "part-time"],
   apprenticeship: ["internship", "working-student"],
@@ -770,7 +777,7 @@ const EXPERIENCE_RE = /\b(\d{1,2})\s*\+?\s*(?:years?|yrs?|jahre\w*|ans)\b/;
 const ENGLISH_MARKERS = ["the", "and", "you", "with", "for", "our", "are", "will", "have", "your", "about", "join"];
 const NON_ENGLISH_MARKERS = ["und", "der", "die", "das", "wir", "sie", "fur", "mit", "deine", "dein", "nous", "vous", "pour", "avec", "les", "des", "notre", "te", "tu", "et", "le", "la"];
 
-interface TextWindow {
+export interface TextWindow {
   title: string;
   tags: string;
   body: string;
@@ -955,7 +962,7 @@ function scoreEnglish(job: NormalizedJob, intent: JobIntent, window: TextWindow)
   return { points: 1, max: 8, uncertainty: "Posting looks like it is written in the local language" };
 }
 
-function matchedQueriesFor(intent: JobIntent, window: TextWindow): string[] {
+export function matchedQueriesFor(intent: JobIntent, window: TextWindow): string[] {
   const matched: string[] = [];
   for (const query of intent.searchQueries) {
     const terms = normalizeText(query)
