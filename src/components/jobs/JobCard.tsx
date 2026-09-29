@@ -44,6 +44,13 @@ const IMPACT_DOT: Record<string, string> = {
   neutral: "bg-nb-line",
 };
 
+/** Compact wording for the per-preference states a card has room to show. */
+const STATE_NOTE: Record<string, { marker: string; word: string; chip: string }> = {
+  partial: { marker: "~", word: "partly", chip: "bg-nb-amber text-nb-deep" },
+  unknown: { marker: "?", word: "not stated", chip: "bg-nb-surface2 text-nb-line/60" },
+  notApplicable: { marker: "–", word: "n/a", chip: "bg-nb-surface2 text-nb-line/55" },
+};
+
 function Chip({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <span
@@ -89,6 +96,12 @@ export function JobCard({
           ) : (
             <Chip className={cn("truncate", FRESHNESS_META[job.freshness].chip)}>
               {FRESHNESS_META[job.freshness].label}
+            </Chip>
+          )}
+          {/* Coverage sits beside the fit, never inside it. */}
+          {scored && job.coverage !== undefined && (
+            <Chip className="shrink-0 bg-nb-surface2 text-nb-line/65">
+              coverage {job.coverage}%
             </Chip>
           )}
         </div>
@@ -159,7 +172,7 @@ export function JobCard({
         {scored && (
           <div>
             <p className="font-mono text-[10px] tracking-[0.18em] text-nb-line/55 uppercase">
-              Why this ranks here
+              Preference by preference
             </p>
             <ul className="mt-2 space-y-1.5">
               {job.reasons.map((reason) => (
@@ -182,6 +195,41 @@ export function JobCard({
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {/* Partial / unknown / not-applicable states ------------------------
+            Matches are already in the reasons above; these are the ones a
+            single good/bad split would hide. */}
+        {scored && job.facets && job.facets.some((facet) => STATE_NOTE[facet.state]) && (
+          <div className="flex flex-wrap gap-1.5">
+            {job.facets
+              .filter((facet) => facet.state === "partial")
+              .slice(0, 3)
+              .map((facet) => (
+                <Chip key={`partial-${facet.area}-${facet.label}`} className={STATE_NOTE.partial.chip}>
+                  {STATE_NOTE.partial.marker} {facet.label}: {STATE_NOTE.partial.word}
+                </Chip>
+              ))}
+            {job.facets
+              .filter((facet) => facet.state === "unknown")
+              .slice(0, 3)
+              .map((facet) => (
+                <Chip key={`unknown-${facet.area}-${facet.label}`} className={STATE_NOTE.unknown.chip}>
+                  {STATE_NOTE.unknown.marker} {facet.label}: {STATE_NOTE.unknown.word}
+                </Chip>
+              ))}
+            {job.facets
+              .filter((facet) => facet.state === "notApplicable")
+              .slice(0, 2)
+              .map((facet) => (
+                <Chip
+                  key={`na-${facet.area}-${facet.label}`}
+                  className={STATE_NOTE.notApplicable.chip}
+                >
+                  {STATE_NOTE.notApplicable.marker} {facet.label}: {STATE_NOTE.notApplicable.word}
+                </Chip>
+              ))}
           </div>
         )}
 

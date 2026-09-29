@@ -43,11 +43,12 @@ Turn a candidate's plain-English job request into a structured search plan.
 
 Reply with ONE minified JSON object and nothing else. No markdown, no code fences.
 Shape:
-{"summary":string,"roleKeywords":string[],"titles":string[],"skills":string[],"locations":string[],"jobTypes":string[],"seniority":string[],"startAfter":string|null,"remotePreference":"remote"|"hybrid"|"onsite"|"any","englishFriendly":boolean,"searchQueries":string[]}
+{"summary":string,"roleKeywords":string[],"titles":string[],"relatedTitles":string[],"skills":string[],"locations":string[],"jobTypes":string[],"seniority":string[],"startAfter":string|null,"remotePreference":"remote"|"hybrid"|"onsite"|"any","englishFriendly":boolean,"searchQueries":string[]}
 
 Rules:
 - roleKeywords: 3-8 short lowercase concepts for the target role/domain, e.g. "data science", "machine learning", "business intelligence".
 - titles: 2-5 realistic job titles a matching posting would use, e.g. "Data Analyst Intern".
+- relatedTitles: 3-8 adjacent job titles, occupation families or concepts a *related* posting might use instead of the literal wording, e.g. for "data science": "business intelligence analyst", "analytics engineer", "marketing analytics". These are how a differently-worded but related listing is found. Never list an unrelated field.
 - searchQueries: 4-8 short queries a person would actually type into a job board, combining role + level + location.
 - locations: ONLY places the user named or unambiguously implied. Never invent a location.
 - skills: only tools/languages the user named. Never invent skills.
@@ -61,6 +62,7 @@ interface RawLlmShape {
   summary?: unknown;
   roleKeywords?: unknown;
   titles?: unknown;
+  relatedTitles?: unknown;
   skills?: unknown;
   locations?: unknown;
   jobTypes?: unknown;
@@ -169,7 +171,7 @@ async function callOpenAiCompatible(
       signal: controller.signal,
     });
     if (!response.ok) {
-      console.warn(`[profeshare] ${model} responded HTTP ${response.status}`);
+      console.warn(`[clearroute] ${model} responded HTTP ${response.status}`);
       return null;
     }
     const payload = (await response.json()) as {
@@ -203,7 +205,7 @@ async function callOpenAiCompatible(
     };
   } catch (error) {
     console.warn(
-      `[profeshare] ${model} call failed:`,
+      `[clearroute] ${model} call failed:`,
       error instanceof Error ? error.message : error,
     );
     return null;
@@ -233,12 +235,12 @@ async function callBuiltInGateway(userPrompt: string): Promise<string | null> {
       const reason = response?.error ?? "no content";
       if (/unauthorized|invalid token|forbidden/i.test(String(reason))) {
         gatewayUnavailable = true;
-        console.warn("[profeshare] built-in AI gateway not authorized for this deployment:", reason);
+        console.warn("[clearroute] built-in AI gateway not authorized for this deployment:", reason);
         break;
       }
     } catch (error) {
       console.warn(
-        "[profeshare] built-in AI gateway unavailable:",
+        "[clearroute] built-in AI gateway unavailable:",
         error instanceof Error ? error.message : error,
       );
       break;
@@ -311,6 +313,8 @@ export async function extractIntentWithLLM(
   const remotePreference: IntentDraft["remotePreference"] =
     remoteRaw === "remote" || remoteRaw === "hybrid" || remoteRaw === "onsite" ? remoteRaw : "any";
 
+  const related = stringList(parsed.relatedTitles, 8);
+
   const draft: IntentDraft = {
     roleKeywords: [...stringList(parsed.roleKeywords, 8), ...stringList(parsed.titles, 5)],
     skills: stringList(parsed.skills, 8),
@@ -320,6 +324,7 @@ export async function extractIntentWithLLM(
     ...(startAfter ? { startAfter } : {}),
     remotePreference,
     englishFriendly: parsed.englishFriendly === true,
+    ...(related.length ? { related } : {}),
   };
 
   const queries = stringList(parsed.searchQueries, 8).map((q) => q.replace(/"/g, ""));
@@ -330,6 +335,7 @@ export async function extractIntentWithLLM(
     draft.skills.length > 0 ||
     draft.locations.length > 0 ||
     draft.jobTypes.length > 0 ||
+    related.length > 0 ||
     queries.length > 0 ||
     Boolean(summary);
   if (!hasSignal) return null;

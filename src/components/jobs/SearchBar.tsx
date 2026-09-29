@@ -56,9 +56,10 @@ export function SearchBar({
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-md text-xs leading-5 text-nb-line/60">
-            Plain English is enough. PROFESHARE reads the role, level, location, start
-            date and skills, ranks the live listings against them, and attaches a
-            reason to every score.
+            Plain English is enough. ClearRoute reads the role, field, location, work
+            mode, contract and language you mention, then attaches the evidence behind
+            every score. The more specific the request, the more reliable the ranking —
+            naming a field and a place beats a single job title.
           </p>
           <Button
             type="button"

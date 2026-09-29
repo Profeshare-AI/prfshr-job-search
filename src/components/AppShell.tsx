@@ -97,7 +97,7 @@ export function AppShell({
             · nothing is stored on our servers, your search lives in this tab.
           </p>
           <p className="font-mono text-[10px] tracking-[0.2em] text-nb-line/55 uppercase">
-            PROFESHARE AI · Version 1
+            ClearRoute · Version 1
           </p>
         </div>
       </footer>

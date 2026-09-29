@@ -29,11 +29,11 @@ const BAND_LEGEND = [
 ];
 
 const PIPELINE = [
-  "Your sentence is parsed into role, skills, location, level, start date and language.",
-  "That reading becomes several short queries for the job board.",
-  "Live listings are fetched, normalized and de-duplicated in one pass.",
-  "Every listing gets a mismatch, uncertainty and freshness check.",
-  "Each one is scored from 0 to 100 and every score carries its reasons.",
+  "Your sentence is read into preferences — role, field, location, work mode, contract, language — each weighted by how strongly you said it.",
+  "That reading becomes several short queries for the job boards.",
+  "Live listings are fetched, normalized and de-duplicated; known closed or expired ones are dropped.",
+  "Every preference is checked against every listing and gets a state: match, partial, mismatch, hard contradiction, not stated, or not applicable.",
+  "Preference Fit is scored from 0 to 100 with information coverage beside it, and the evidence behind each conclusion travels with the result.",
   "Apply opens the original posting so you can finish the application there.",
 ];
 
@@ -106,9 +106,10 @@ export default function Dashboard() {
               Welcome back, {displayName}.
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-nb-line/55 sm:text-base">
-              Describe the role you want in your own words. PROFESHARE reads it, pulls
-              current listings from the live web, scores each one and tells you why —
-              so you can apply with confidence instead of guessing.
+              Describe the work you want in your own words. ClearRoute reads the
+              preferences out of it, pulls current listings from the live web, checks
+              each one against everything you asked for, and shows the evidence behind
+              every result.
             </p>
           </div>
 
@@ -178,9 +179,9 @@ export default function Dashboard() {
                   Nothing matched this request
                 </p>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-nb-line/55">
-                  Every listing in the current pool conflicted with your filters. Try
-                  widening the location, dropping the start date, or naming a broader
-                  role — then run it again.
+                  Nothing in the live pool lined up with what you asked for. Try widening
+                  the location, dropping the start date, loosening a “must”, or naming a
+                  broader field — then run it again in the same box.
                 </p>
               </div>
             ) : (
@@ -234,6 +235,52 @@ function IdleState() {
         />
       </div>
 
+      {/* How to phrase a request, without turning it into a filter panel ----- */}
+      <section className="nb-border nb-shadow bg-nb-surface">
+        <div className="nb-border-b flex items-center gap-2 bg-nb-deep px-4 py-2">
+          <Sparkles className="size-3.5 text-nb-amber" />
+          <h2 className="font-mono text-[10px] tracking-[0.2em] text-nb-line/60 uppercase">
+            How to ask for what you want
+          </h2>
+        </div>
+        <div className="grid grid-cols-1 gap-3 p-4 lg:grid-cols-2">
+          <div className="nb-border bg-nb-deep p-3">
+            <p className="font-mono text-[10px] tracking-[0.16em] text-nb-line/50 uppercase">
+              Vague request
+            </p>
+            <p className="mt-1.5 text-sm leading-6 text-nb-line/70">“a job in tech”</p>
+            <p className="mt-2 text-[11px] leading-5 text-nb-line/55">
+              There is almost nothing to check a listing against, so the ranking can only
+              fall back on how current each posting is. ClearRoute says that out loud
+              instead of pretending to be confident.
+            </p>
+          </div>
+          <div className="nb-border bg-nb-deep p-3">
+            <p className="font-mono text-[10px] tracking-[0.16em] text-nb-amber uppercase">
+              Specific request
+            </p>
+            <p className="mt-1.5 text-sm leading-6 text-nb-line/80">
+              “Data science internship in Paris or Île-de-France, hybrid is fine, must be
+              English-friendly, starting January, Python and SQL, no temporary
+              contracts.”
+            </p>
+            <p className="mt-2 text-[11px] leading-5 text-nb-line/55">
+              Role, field, location, work mode, contract, start date, language and an
+              exclusion — each becomes a preference we can check, and the ones you said
+              “must” or “no” about become requirements.
+            </p>
+          </div>
+        </div>
+        <div className="border-t-2 border-dashed border-nb-line/20 px-4 py-3">
+          <p className="text-xs leading-5 text-nb-line/60">
+            The more specific the request, the more reliable the ranking — but there are
+            no mandatory dropdowns. After each search you get a read-only summary of how
+            your words were read. To change it, say so in the same box (“I meant Berlin,
+            not Munich”) and run it again.
+          </p>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr]">
         <section className="nb-border nb-shadow bg-nb-surface">
           <div className="nb-border-b flex items-center gap-2 bg-nb-deep px-4 py-2">
@@ -284,10 +331,25 @@ function IdleState() {
                 A mismatch contradicts your request.
               </p>
               <p className="flex items-start gap-2 text-xs leading-5 text-nb-line/60">
+                <span className="nb-border mt-0.5 shrink-0 bg-nb-amber px-1.5 py-0.5 font-mono text-[10px] font-semibold text-nb-deep uppercase">
+                  ~
+                </span>
+                A partial match is related work — a sibling job title or an adjacent work
+                mode, not a rejection for using different words.
+              </p>
+              <p className="flex items-start gap-2 text-xs leading-5 text-nb-line/60">
                 <span className="nb-border mt-0.5 shrink-0 bg-nb-surface2 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-nb-line uppercase">
                   ?
                 </span>
-                An uncertainty is something the listing never told us.
+                “Not stated” means the listing never told us. It is neither a match nor a
+                mismatch, and it never earns points.
+              </p>
+              <p className="flex items-start gap-2 text-xs leading-5 text-nb-line/60">
+                <span className="nb-border mt-0.5 shrink-0 bg-nb-line px-1.5 py-0.5 font-mono text-[10px] font-semibold text-nb-deep uppercase">
+                  %
+                </span>
+                Coverage is reported beside the fit: how much of your request the listing
+                actually let us check. Freshness is shown separately and never scored.
               </p>
             </div>
           </div>

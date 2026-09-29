@@ -96,8 +96,8 @@ export default function Browse() {
           </h1>
           <p className="mt-3 text-sm leading-6 text-nb-line/55 sm:text-base">
             Newest first, de-duplicated, {catalog?.stats.maxResults ?? 100} at a time.
-            Filter it here, or hand the whole thing to PROFESHARE as a sentence and get
-            it ranked instead.
+            Filter it here, or hand the whole thing to ClearRoute as a sentence and get
+            it ranked against everything you asked for instead.
           </p>
         </header>
 
@@ -260,7 +260,7 @@ export default function Browse() {
             </p>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-nb-line/55">
               The catalog holds the newest live listings only. Clear the filters, hit
-              refresh, or describe the role you want and let PROFESHARE rank it.
+              refresh, or describe the role you want and let ClearRoute rank it.
             </p>
           </div>
         )}

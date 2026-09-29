@@ -1,5 +1,5 @@
 /**
- * The boards PROFESHARE reads, and the credit each one asks for.
+ * The boards ClearRoute reads, and the credit each one asks for.
  *
  * This is not decoration. Arbeitnow and Jobicy both make visible credit a
  * condition of using their feeds, and Jobicy additionally requires that every

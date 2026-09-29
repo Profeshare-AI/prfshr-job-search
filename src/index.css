@@ -42,7 +42,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* PROFESHARE palette, exposed as Tailwind colors (bg-nb-amber, border-nb-line, ...).
+/* ClearRoute palette, exposed as Tailwind colors (bg-nb-amber, border-nb-line, ...).
    The values below are the dark defaults; the live values come from the
    :root / html.light / html.dark blocks further down so both themes can reuse
    the exact same class names.
@@ -62,7 +62,7 @@
   --radius-xl: 0px;
 }
 
-/* The PROFESHARE colours resolve through the raw --nb-* palette variables, so the
+/* The ClearRoute colours resolve through the raw --nb-* palette variables, so the
    same class name (`bg-nb-amber`, `text-nb-deep`, …) switches with the theme
    instead of being baked to one hex value. */
 @theme inline {
@@ -217,7 +217,7 @@ html.dark {
 }
 
 /* -------------------------------------------------------------------------
-   Neobrutalism Minimalism helpers, tuned for the dark PROFESHARE canvas:
+   Neobrutalism Minimalism helpers, tuned for the dark ClearRoute canvas:
    square corners, 2px cream outlines, hard offset shadows, flat blocks.
    ------------------------------------------------------------------------- */
 .nb-border {

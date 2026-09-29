@@ -1,1 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 96.81 96.81"><rect width="96.81" height="96.81" rx="18"/><g fill="#fff"><rect x="24.67" y="24.67" width="47.47" height="11.87"/><rect x="24.67" y="36.54" width="11.87" height="35.61"/><rect x="40.06" y="39.98" width="23.74" height="11.87"/><rect x="40.06" y="51.85" width="11.87" height="20.3"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="ClearRoute">
+  <!--
+    The ClearRoute mark, matching the wordmark glyph in the nav bar: a flat amber
+    tile, a dark 2px-equivalent outline and a bold "C". Drawn as geometry rather
+    than text so it renders identically at 16px with no webfont loaded, and with
+    a fixed palette so it stays legible on both light and dark browser chrome.
+
+    Tile:   #ffd34d  (--nb-amber)
+    Outline + letter: #0c0c0e  (--nb-deep)
+  -->
+  <rect x="2" y="2" width="60" height="60" fill="#ffd34d" stroke="#0c0c0e" stroke-width="4"/>
+  <path d="M45 22.4A15 15 0 1 0 45 41.6" fill="none" stroke="#0c0c0e" stroke-width="9"/>
+</svg>

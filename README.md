@@ -1,8 +1,8 @@
-# PROFESHARE Opportunity Search
+# ClearRoute Opportunity Search
 
 **Find relevant jobs and apply with confidence.**
 
-Describe the role you want in one plain sentence. PROFESHARE reads the request the way a
+Describe the work you want in one plain sentence. ClearRoute reads the request the way a
 recruiter would — role, level, location, start date, work mode, skills — pulls current
 listings from the live web, and ranks each one with the reasons attached. Every result
 tells you what lines up, what conflicts, and what the posting never told you.
@@ -45,16 +45,18 @@ somebody else's taxonomy — seniority buckets, a fixed location dropdown, a "re
 that means a different thing on every site. You get 400 rows and no idea which twelve
 matter.
 
-PROFESHARE inverts that. You write the request. The system shows you how it read you, which
+ClearRoute inverts that. You write the request. The system shows you how it read you, which
 queries it ran against the boards, and why each listing landed where it did. The output is
 a short ranked shortlist with the reasoning visible, not a wall of cards.
 
 Two principles shaped the whole build:
 
-1. **Transparent ranking.** A weighted score with named facets and per-reason point values,
-   never a black-box "relevance" number.
-2. **Honesty over volume.** Mismatches, uncertainty and stale dates are surfaced on the
-   card itself. A listing that only half-fits says so.
+1. **Transparent ranking.** A weighted score over the preferences the user actually stated,
+   with the state, the evidence and the method behind every conclusion — never a black-box
+   "relevance" number.
+2. **Honesty over volume.** Mismatches, unknown information and stale dates are surfaced on
+   the card itself, and missing information is never counted in the user's favour. A listing
+   that only half-fits says so.
 
 ---
 
@@ -63,7 +65,7 @@ Two principles shaped the whole build:
 Four things, done properly.
 
 ### 1. Prompt it
-One sentence is the whole interface. PROFESHARE parses the role, skills, location, level,
+One sentence is the whole interface. ClearRoute reads roles, fields, location, work mode, contract, pay and language, weights each by how strongly you said it, and shows you that reading back.
 start date, work mode and language out of free text, shows you that reading back, and
 turns it into a set of short job-board queries you can inspect. The example prompts under
 the search box cover internships, working-student roles, and early-career searches.
@@ -82,7 +84,7 @@ instantly because results are cached in the tab; a direct link or a refresh re-f
 listing live.
 
 ### 4. Apply at the source
-Apply buttons always open the original posting on the job board. PROFESHARE never posts an
+Apply buttons always open the original posting on the job board. ClearRoute never posts an
 application on your behalf, and it never stores an application.
 
 Plus: email-OTP or guest sign-in, a personal workspace that keeps your results in the tab,
@@ -97,14 +99,14 @@ code, not a marketing diagram.
 
 | # | Step | Where it lives |
 |---|------|----------------|
-| 1 | **Understand the request.** Free text is parsed into role keywords, skills, locations, level, seniority, start month, work mode and language. A language model refines the reading when one is configured; the rules engine always produces a complete plan on its own. | `parseIntentRules()` in `src/convex/jobs/rules.ts`, `extractIntentWithLLM()` in `llm.ts`, merged by `mergeIntent()` |
+| 1 | **Understand the request.** Free text is read into preferences — role, field, location, work mode, contract, schedule, pay, start date, language, skills, employer, exclusions — each weighted hard/strong/soft by the user's own wording, plus a search mode (explicit role, field exploration, broad). A language model refines the reading and expands it into related concepts when one is configured; the rules engine always produces a complete plan on its own. | `parseIntentRules()` in `src/convex/jobs/rules.ts`, `extractIntentWithLLM()` in `llm.ts`, merged by `mergeIntent()`, then `interpretPreferences()` in `preference.ts` |
 | 2 | **Build search queries.** The reading becomes several short query strings (`data science internship`, `python paris`, …) shown in the UI as "queries we ran". | `generateSearchQueries()` in `rules.ts` |
 | 3 | **Fetch live listings.** Seven boards are queried concurrently, each handed the parsed request and its own budget, so a board that is down or rate limited degrades the pool instead of failing the search. | `loadPool()` in `providers/index.ts`, the source modules in `providers/` |
 | 4 | **Normalize.** Each board's vocabulary is mapped onto the shared shape as its records arrive: HTML descriptions become searchable plain text, free-text locations become city + country, and messy job-types collapse into a canonical set. | `normalize*Job()` in each `providers/*.ts`, `resolveJobLocation()` / `canonicalJobTypes()` in `rules.ts` |
 | 5 | **De-duplicate.** Same company + same title + same city, or the same posting URL, collapses into one card. | `dedupeJobs()` in `rules.ts` |
-| 6 | **Check mismatch, uncertainty and freshness.** Facet by facet, the listing is compared against the request and every conflict or unknown is recorded. | `scoreJob()` + `describeFreshness()` in `rules.ts` |
-| 7 | **Rank.** Weighted score out of 100, sorted. Requests with no usable filters fall back to freshness order. | `scoreJob()` and the sort in `search.ts` |
-| 8 | **Explain.** Each listing carries a short list of reasons, each with its point value, ordered by impact. | `reasons[]` from `scoreJob()` |
+| 6 | **Drop the gone, then judge every preference.** Known closed or expired listings are removed. Deterministic checks run first, then lexical, taxonomy and semantic evaluation, and each preference lands in one of six states with the listing text behind it. | `isExpiredJob()` + `scorePreferenceJob()` in `preference.ts` |
+| 7 | **Rank.** Preference Fit out of 100, tie-broken by information coverage, then freshness, then title. Listings that contradict an explicit requirement are dropped, and field exploration spreads results across related job families. | `compareScored()` + `diversifyByFamily()` in `preference.ts`, the sort in `search.ts` |
+| 8 | **Explain.** Each result carries its per-preference states, the evidence quoted from the listing, and which method reached each conclusion. | `facets[]` from `scorePreferenceJob()` |
 | 9 | **Show cards.** Rank badge, band, score meter, meta, reasons, signal chips, source attribution. | `src/components/jobs/JobCard.tsx` |
 | 10 | **Apply.** Every Apply button opens the original posting in a new tab. | `JobCard.tsx`, `src/pages/JobDetail.tsx` |
 
@@ -118,46 +120,102 @@ api.jobs.search.getListing({ id })      // one live listing by id       → Cata
 
 ---
 
-## The ranking model
+## The ranking model — Preference Fit
 
-The score is a weighted sum over the facets the user actually asked for. Each facet has a
-maximum, partial matches earn less than their linear share (coverage is raised to the power
-of 1.6), and a facet that wasn't requested is excluded from both the earned points and the
-maximum — so a listing can never score well by having nothing to match against.
+Preference Fit answers one question: **how well does this listing correspond to what the user
+said they want?** It deliberately does not ask whether the user is *qualified* — that is
+Profile Fit, and it is not in this release. Skills named in a request shape the kind of work
+being looked for; evidence that the user possesses them is out of scope.
 
-| Facet | Max | How points are earned |
-|-------|----:|------------------------|
-| Role and domain fit | **34** | Coverage of the role keywords, weighted 1.0 in the title, 0.8 in tags/types, 0.5 in the description. Very short ambiguous terms (`ai`, `bi`, `r`) only count from the title or tags. |
-| Skills you named | **20** | Same weighting over the skills detected in the request. |
-| Location and work mode | **18** | Exact city 18, region 18, right country 15, remote-when-asked 18, remote-otherwise 7. |
-| Level and contract type | **12** | Exact job type 12, a related type (internship ↔ working student ↔ apprenticeship) 7, an unstated level 6. |
-| Posting freshness | **8** | Fresh (≤7 days) 8, recent (≤21) 5.5, aging (≤60) 3, stale 1, unstated 3 of 4. |
-| English-friendly | **8** | Only scored when the request asks for it: reads as English 8, mentions English 5, local language 1. |
+The request is read into **preferences**, each with an importance taken from the user's own
+wording:
 
-Penalties then subtract from the total: a senior-sounding title on a student search (−8),
-and a posting demanding three or more years of experience on a student search (−6).
+| Importance | Triggered by | Effect |
+|------------|--------------|--------|
+| **Hard** | "must", "only", "required", "no", "exclude" | A requirement. A listing that explicitly contradicts it is removed from the results, not demoted. |
+| **Strong** | "prefer", "ideally", "important" | Counts double against a passing mention. Never removes a listing. |
+| **Soft** | an ordinary mention | Counts once. A value being mentioned is never enough to make it a requirement. |
+
+The preference areas are role/occupation, field/domain, responsibilities, location, work
+mode (remote · hybrid · on-site), contract type, schedule, pay, start date, working
+language, skills, employer and explicit exclusions.
+
+Each preference is then checked with the method that suits it, and the method is recorded on
+the result:
+
+| Method | Used for |
+|--------|----------|
+| **Deterministic rules** | Location, work mode, contract, pay, dates and language requirements — structured facts where a rule beats a guess. Run first, because they are cheap and they are the only checks allowed to report a hard contradiction. |
+| **Lexical** | Exact terminology, weighted 1.0 in the title, 0.8 in tags/types, 0.5 in the description only. Very short ambiguous terms (`ai`, `bi`, `r`) only count from the title or tags, so "data-driven marketing" is not a data role. |
+| **Taxonomy** | Related titles, occupation families, synonyms and translations (`datenwissenschaftler` → data scientist). A differently-worded but related title is a partial match, never a rejection. |
+| **Semantic** | Concepts the language model expanded the request into, used when no literal or family term lands. |
+
+Semantic similarity never overrides a stated fact: a contradiction found by a rule stands
+whatever the surrounding text looks like.
+
+Every preference ends in one of **six states**, and they are deliberately not a
+match/mismatch split:
+
+| State | Meaning |
+|-------|---------|
+| **Match** | The listing states something that answers the preference. |
+| **Partial match** | Related rather than exact: a sibling title, an adjacent work mode, the right country but a different city. |
+| **Mismatch** | The listing states something that does not line up with a stated preference. |
+| **Hard contradiction** | The user made it a requirement and the listing explicitly contradicts it. Removed from the results. |
+| **Unknown** | The listing never provided the information. Never a match, never a mismatch, and never a point either way. |
+| **Not applicable** | The preference does not apply to this listing — a city requirement on a fully remote posting, for example. |
+
+### Fit and coverage are two numbers
+
+The headline **Preference Fit** is the weighted share of the checkable preferences that were
+answered, eased toward neutral in proportion to how much of the request could actually be
+checked. A listing that answers one preference out of six does not outrank one that answers
+five, and a listing that states nothing is not punished as if it had said no.
+
+**Information coverage** is reported beside it: how much of the request the listing let us
+evaluate. A strong fit on thin coverage is shown as exactly that. No embedding or similarity
+value is ever displayed as a percentage — the number shown is the product's whole evaluation.
+
+### Freshness is separate
+
+Freshness contributes nothing to Preference Fit. Listings that are known closed or expired
+are dropped before scoring; the rest carry their own freshness chip. Freshness only breaks
+ties between listings that already score the same, and a listing with no publication date is
+never treated as stale. When a request contains no preferences at all, freshness orders the
+results — but it stays a separate fact, not part of the fit.
+
+`interpretPreferences()` and `scorePreferenceJob()` in `src/convex/jobs/preference.ts`, with
+`compareScored()` as the ranking key. The legacy weighted scorer in `rules.ts` is still
+reachable with `PREFERENCE_FIT_ENGINE=v1`, and `PREFERENCE_FIT_SHADOW=1` logs a side-by-side
+comparison of the two for calibration.
 
 **Bands:** strong ≥ 80, good ≥ 68, fair ≥ 52, weak < 52.
 
-**Low-confidence mode:** if fewer than six listings carry any hard signal, the near misses
-are returned too — every one flagged with why it missed, plus a banner explaining that
-nothing matched closely.
+**Low-confidence mode:** if fewer than six listings share any signal with the request, the
+near misses are returned too — every one flagged with why it missed.
 
 ---
 
 ## Honest signals
 
-Every scored card can carry three kinds of notes. They are the reason the product feels
-trustworthy rather than merely fast.
+Every scored card carries the per-preference states, so the reasons for a rank are visible
+rather than inferred. The ones a card has room for:
 
 | Signal | Meaning | Example |
 |--------|---------|---------|
-| `!` **Mismatch** | The listing contradicts the request. | *Munich instead of Paris · Listed as full time, not internship · Posted 3 months ago — may already be filled* |
-| `?` **Uncertainty** | The listing never told us. | *The level is not stated · No posting date from the source · Start date (2027-01) not confirmed* |
-| **Freshness** | How old the posting is, straight from the board. | *Posted today · Posted 2 weeks ago · Posting date not published* |
+| `✓` **Match** | The listing answers a preference. | *the title itself is Data Scientist Intern · Paris — the city you named* |
+| `~` **Partial match** | Related rather than exact. | *different wording, related work: this listing is about business intelligence · right country, different city* |
+| `!` **Mismatch** | The listing contradicts a stated preference. | *Munich instead of Paris · Listed as full time, not internship* |
+| `×` **Hard contradiction** | A requirement the listing explicitly contradicts. The listing is removed. | *requires remote work, listing is on-site only* |
+| `?` **Unknown** | The listing never said, so it is not a match and not a mismatch. | *the listing does not state the contract type · does not state a working language* |
+| `–` **Not applicable** | The preference does not apply here. | *a city requirement on a fully remote posting* |
+| **Coverage** | How much of the request the listing let us check, reported beside the fit. | *coverage 57% · Partial* |
+| **Freshness** | How old the posting is, straight from the board. Never scored. | *Posted today · Posted 2 weeks ago · Posting date not published* |
 
-Uncertainty is deliberately separated from mismatch: one is "the listing says no", the
-other is "the listing says nothing". Both lower the score, neither is hidden.
+Unknown is deliberately separated from mismatch: one is "the listing says no", the other is
+"the listing says nothing". Neither is invented, and only the first can lower the fit.
+Language is the sharpest example — an English-language ad that asks for fluent German
+requires German, and an ad that mentions no language at all proves nothing.
 
 ---
 
@@ -167,7 +225,7 @@ other is "the listing says nothing". Both lower the score, neither is hidden.
 |-------|--------|--------|
 | `/` | public | Landing page — positioning, the three ways in, the pipeline, live example prompts, the scoring table, the v1 scope |
 | `/auth` | public | Email one-time-code sign-in, or continue as a guest |
-| `/dashboard` | protected | Personal workspace — greeting, session panel, prompt composer, "how PROFESHARE read your request", ranked result cards |
+| `/dashboard` | protected | Personal workspace — greeting, session panel, prompt composer, "how ClearRoute read your request", ranked result cards |
 | `/browse` | protected | Catalog — newest live listings with filtering, plus a plain-English hand-off |
 | `/jobs/:id` | protected | Detail page — score, apply-confidence breakdown, preview, source record, Apply |
 | `*` | public | 404 |
@@ -202,12 +260,12 @@ src/
 │   └── NotFound.tsx
 ├── components/
 │   ├── AppShell.tsx               # nav (brand, sections, theme toggle, sign out) + footer
-│   ├── BrandMark.tsx              # PROFESHARE wordmark
+│   ├── BrandMark.tsx              # ClearRoute wordmark
 │   ├── ThemeToggle.tsx            # light/dark switch
 │   ├── RequireAuth.tsx            # protected-route wrapper
 │   ├── jobs/
 │   │   ├── SearchBar.tsx          # prompt composer + example chips
-│   │   ├── IntentPanel.tsx        # "how PROFESHARE read your request" + run stats
+│   │   ├── IntentPanel.tsx        # "how ClearRoute read your request" + run stats
 │   │   └── JobCard.tsx            # result card (scored and catalog variants)
 │   └── ui/                        # shadcn/ui primitives
 ├── hooks/use-auth.ts              # the only supported auth hook
@@ -215,9 +273,11 @@ src/
     ├── auth.ts, auth.config.ts, auth/emailOtp.ts, http.ts, users.ts, schema.ts
     └── jobs/
         ├── search.ts              # the three actions (the "use node" entry point)
-        ├── rules.ts               # intent parsing, query building, dedupe, scoring, reasons
+        ├── preference.ts          # Preference Fit: preference reading, hybrid matching, fit vs coverage
+        ├── flags.ts               # PREFERENCE_FIT_ENGINE / _SHADOW switches + engine comparison
+        ├── rules.ts               # intent parsing, query building, dedupe, legacy scorer
         ├── text.ts                # HTML→text, normalization, title cleaning, slugs
-        ├── llm.ts                 # optional model-assisted intent extraction
+        ├── llm.ts                 # optional model-assisted intent extraction + concept expansion
         ├── types.ts               # validators shared with the front end
         └── providers/
             ├── source.ts          # the JobSource contract + shared plumbing
@@ -231,12 +291,14 @@ src/
             └── adzuna.ts          # the India index (source #7)
 ```
 
-**Why the split matters.** `rules.ts`, `text.ts` and `types.ts` are pure and side-effect
-free, so the entire pipeline can be reasoned about and unit-tested without a network or a
-database. `search.ts` is the only `"use node"` file, which is where the external calls
-belong. The model layer is additive by construction: `mergeIntent()` unions what the model
-says into what the rules already produced, and every model field is validated against the
-same canonical vocabulary the rules use.
+**Why the split matters.** `rules.ts`, `preference.ts`, `text.ts` and `types.ts` are pure and
+side-effect free, so the entire pipeline — including Preference Fit — can be reasoned about
+and unit-tested without a network or a database. `search.ts` is the only `"use node"` file,
+which is where the external calls belong. The model layer is additive by construction:
+`mergeIntent()` unions what the model says into what the rules already produced, and every
+model field is validated against the same canonical vocabulary the rules use. The upgraded
+engine is isolated behind `flags.ts`, so it can be switched back to the legacy scorer or
+run side by side for calibration at any time.
 
 **Sources are plugins, not branches.** Every board implements one `JobSource` interface and
 `loadPool()` runs them concurrently with tolerance for partial failure, so adding a board means
@@ -252,7 +314,7 @@ languages.
 
 ```bash
 # 0. get the code
-git clone <this-repo-url> profeshare-opportunity-search && cd profeshare-opportunity-search
+git clone <this-repo-url> clearroute-opportunity-search && cd clearroute-opportunity-search
 
 # 1. install dependencies
 bun install
@@ -629,7 +691,7 @@ original posting. Built with
 [shadcn/ui](https://ui.shadcn.com) and [Framer Motion](https://www.framer.com/motion/).
 
 **Proprietary — all rights reserved. Not open source.** © 2026 Profeshare AI, an ArikaX
-entity. See [`LICENSE`](./LICENSE). PROFESHARE is developed as a submodule of a private product
+entity. See [`LICENSE`](./LICENSE). ClearRoute is developed as a submodule of a private product
 and is offered to end users only as a hosted service; access to this repository or a copy of
 the code grants no right to use, copy, modify, redistribute, or self-host it. Third-party
 dependencies and all listing data from the boards above remain under their own terms.

@@ -1,4 +1,4 @@
-# PROFESHARE — Development Log
+# ClearRoute — Development Log
 
 A running record of what changed, when, and what proved it. Newest entries last, so the file
 reads chronologically. Every entry states its evidence — a live search run, a test count, a
@@ -18,7 +18,7 @@ commit SHA — so any claim here can be re-checked rather than taken on trust.
 
 ## 2026-09-26 — First push: the seven-source pool
 
-**Changed** — PROFESHARE opportunity search imported into `Profeshare-AI/prfshr-job-search`
+**Changed** — ClearRoute (then Profeshare) opportunity search imported into `Profeshare-AI/prfshr-job-search`
 (private, default branch `main`) and pushed in three commits:
 
 | Commit | UTC | Message |
@@ -306,3 +306,105 @@ the team can clone it — was finished on 2026-09-26.
   still use it until it is rotated.
 - `.vly-run/github-sync.mjs` needed a `--delete=` flag to perform this removal: it builds trees
   with `base_tree`, so a file deleted locally is *preserved* upstream unless named explicitly.
+
+---
+
+## 2026-09-29 — ClearRoute rebrand + the Preference Fit rebuild
+
+**Changed** — Two things in one session.
+
+*Rebrand.* The product is **ClearRoute** everywhere it is visible. The homepage header, the hero,
+the auth card, both footers, and every page title and meta tag show the name alone — there is no
+"by Profeshare AI" byline anywhere. Updated: `BrandMark` (glyph `C`, and the `byline` prop
+deleted with its one call site), the `AppShell` footer, the
+Landing/Auth/Dashboard/Browse/JobDetail copy, `index.html` title and description,
+`public/manifest.webmanifest`, the accessibility labels, and the theme + `sessionStorage` keys.
+
+The GitHub org and repository, the environment variables and the Convex schema were left alone —
+renaming them is risky and invisible to users.
+
+*Internal metadata.* `package.json` → `clearroute-opportunity-search`, with the root workspace
+name in `bun.lock` brought in line with it (it had drifted to `prfshr-opportunity-search` while
+`package.json` said `profeshare-…`), the README clone directory, and the product title inside
+`LICENSE`.
+
+*Preference Fit.* The matching engine was rebuilt as `src/convex/jobs/preference.ts`, a pure
+module that reads the request into weighted preferences and evaluates each listing against them:
+
+- **Importance from language.** "must/only/no/exclude" → hard, "prefer/ideally/important" →
+  strong, an ordinary mention → soft. A value being mentioned is never enough to make it a
+  requirement.
+- **Four methods, recorded per conclusion.** Deterministic rules for location, work mode,
+  contract, pay, dates and language requirements; lexical matching weighted 1.0 title / 0.8
+  tags / 0.5 description-only; a taxonomy of occupation families, synonyms and translations;
+  and semantic expansion through a new `relatedTitles` field on the model's intent call.
+- **Six match states**, not a match/mismatch split: match, partial, mismatch, hard
+  contradiction, unknown, not applicable. Unknown means "the listing never said"; it neither
+  earns nor loses points.
+- **Hard constraints need three things at once**: the user was explicit, the listing states
+  something reliable, and it contradicts. Contradicted listings are removed, not demoted.
+- **Freshness is out of the fit.** Known closed/expired listings are dropped before scoring; the
+  rest carry a freshness chip and only break ties. A missing date is never treated as stale.
+- **Fit and coverage are two numbers**, both shown; coverage never inflates fit.
+- **Evidence.** Every facet carries the listing text behind it and the method that produced it,
+  and each result carries a reconciliation line tying the headline number to the facets.
+- **Search modes.** explicit-role, field exploration and broad, detected from the request;
+  explicit-role boosts title/family/responsibility weight, field exploration spreads results
+  across related job families instead of near-duplicate titles, and broad says out loud that it
+  is less certain.
+
+The legacy weighted scorer in `rules.ts` is untouched and still reachable, so the two engines
+can be compared: `PREFERENCE_FIT_ENGINE=v1` switches back and `PREFERENCE_FIT_SHADOW=1` logs a
+side-by-side report of rank movement, mean score delta and drop counts.
+
+UI: `IntentPanel` shows the search mode, every interpreted preference with its importance chip,
+the broad-request guidance, a "nothing met your requirements" banner and the dropped counts;
+`JobCard` shows a coverage chip plus the partial/unknown/not-applicable states; `JobDetail` has
+the per-preference table with quoted evidence and method; `Dashboard` has the
+vague-vs-specific request guidance.
+
+**Verified**
+
+- `bun convex dev --once` → functions ready, clean.
+- `bun tsc -b --noEmit` → exit 0.
+- `bun test` → **284 pass, 0 fail**, 700 assertions, 13 files (up from 258 / 625 / 12).
+- `src/convex/jobs/preference.test.ts` covers all twelve required scenarios directly: a satisfied
+  hard preference, a confirmed hard contradiction plus a stated exclusion, a hard preference
+  with missing information, a related title in different words, a vague field request,
+  remote/hybrid/on-site distinctions, an English ad that still requires another language, an
+  unknown contract type, a missing publication date, a fresh-but-irrelevant listing against an
+  older strong one, multilingual terminology, and irrelevant keyword overlap.
+- `grep -rni 'profeshare\|prfshr' .` → nothing left in app source, `index.html`,
+  `manifest.webmanifest`, `package.json`, `bun.lock`, or `LICENSE`'s title. The remaining hits are
+  the legal owner ("Profeshare AI, an ArikaX entity") in `LICENSE`/`README` and the unrenamed
+  GitHub org in the log's links and quoted commit subject.
+- `bun install --frozen-lockfile` → "Checked 392 installs across 461 packages (no changes)", so the
+  package rename left the lockfile in sync. This is the exact check CI runs.
+
+**Decisions**
+
+- **Only the fit was rewritten, not the pipeline.** Budget reservations, the shared cache, the
+  per-user limit and all seven provider integrations are untouched, so provider-facing behaviour
+  is the same as before this session.
+- **No embeddings.** "Semantic" means concept expansion from the model plus a maintained
+  taxonomy, both inspectable and testable. No similarity value is shown as a percentage — the
+  displayed number is the whole Preference Fit.
+- **No per-reason point values in v2.** The headline is a weighted average scaled by how much of
+  the request could be checked, so per-facet points would not sum to it. Facets carry states and
+  evidence instead, and one line states how the score was assembled.
+- **Profile Fit is explicitly out of scope.** Nothing reads a résumé or scores a candidate; skills
+  are matched as *interests* only.
+- **The legal owner was not renamed.** `LICENSE` and the README copyright still read
+  "© 2026 Profeshare AI, an ArikaX entity", because that is the copyright holder rather than the
+  product; only the product *title* inside `LICENSE` changed. The Adzuna note in `API-LIMITS.md`
+  keeps the same wording, because that clause is about the entity, not the product.
+- **`dist/` and `isolate/` still contain the old brand** — build artifacts, excluded from the
+  sync, regenerated rather than edited.
+
+**Open**
+
+- Merge PR #3 (the `/github` console removal) — still open, still `mergeable_state: clean`.
+- Rotate `GITHUB_TOKEN` down to a fine-grained token scoped to `Profeshare-AI/prfshr-job-search`.
+- The labelled evaluation collection is still to come. The engine is built for it: pure
+  functions, a per-facet `method`/`state` record, and a shadow comparison reporting rank
+  movement, mean score delta and how many listings each engine drops.

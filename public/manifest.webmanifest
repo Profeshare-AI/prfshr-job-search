@@ -1,7 +1,7 @@
 {
-  "name": "PROFESHARE Opportunity Search",
-  "short_name": "PROFESHARE",
-  "description": "Find relevant jobs and apply with confidence. Describe the role you want in plain English and get live listings ranked with the reasons attached.",
+  "name": "ClearRoute Opportunity Search",
+  "short_name": "ClearRoute",
+  "description": "Describe the work you want in plain English and get live listings ranked by how well they fit, with the evidence behind every result.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0c0c0e",

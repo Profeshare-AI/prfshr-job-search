@@ -73,7 +73,7 @@ Ordered by how likely it is to bite:
    a *terms* breach, which is the kind of breach that ends access.
 5. **Commercial use beyond the trial.** Adzuna's TOS permits other use by a commercial
    organisation *"subject to a 14 day trial period… After the trial period ends, a licence
-   agreement may be required."* PROFESHARE is a commercial, proprietary product, so this needs a
+   agreement may be required."* ClearRoute is a commercial, proprietary product, so this needs a
    written answer from Adzuna before we scale on top of their data — see §8.
 
 ---
@@ -94,7 +94,7 @@ Adzuna's Terms of Service, verbatim:
 That is Adzuna — our tightest quota, the only one where rotation would meaningfully help — naming
 the exact strategy as a breach, with suspension as the remedy. The clause also covers the "but
 they're different email addresses" defence: the test is *the entity*, not the inbox. Five to ten
-accounts for PROFESHARE-AI is the described misuse.
+accounts for ClearRoute (Profeshare AI) is the described misuse.
 
 ### 4.2 For the keyless sources there are no accounts to rotate
 
@@ -234,7 +234,7 @@ paid per volume and are a different conversation — they are a *cost* answer, n
 
 ## 8. Open questions to settle with the providers
 
-1. **Adzuna commercial licensing** — does PROFESHARE need a licence agreement beyond the 14-day
+1. **Adzuna commercial licensing** — does ClearRoute need a licence agreement beyond the 14-day
    trial, and what limit increase would they grant? This is the one that could change the plan.
 2. **BA Jobsuche limits** — unpublished; worth a polite email asking what is acceptable, since we
    currently guess.
