@@ -127,8 +127,10 @@ said they want?** It deliberately does not ask whether the user is *qualified* �
 Profile Fit, and it is not in this release. Skills named in a request shape the kind of work
 being looked for; evidence that the user possesses them is out of scope.
 
-The request is read into **preferences**, each with an importance taken from the user's own
-wording:
+The request is read into **user-stated preferences**, each with an importance taken from the
+user's own wording. Anything the parser or the model inferred rather than heard — related
+titles, occupation families, synonyms — becomes a *retrieval expansion* instead: it widens the
+search and is never scored:
 
 | Importance | Triggered by | Effect |
 |------------|--------------|--------|
@@ -165,24 +167,59 @@ match/mismatch split:
 | **Unknown** | The listing never provided the information. Never a match, never a mismatch, and never a point either way. |
 | **Not applicable** | The preference does not apply to this listing — a city requirement on a fully remote posting, for example. |
 
+### Only what the user said is scored
+
+The engine separates three things that used to be one list:
+
+| Concept | What it is | Can it affect fit? |
+|---------|-----------|--------------------|
+| **User-stated preferences** | Requirements, preferences, interests, locations and exclusions the user expressed or unambiguously implied | Yes — this is all that is scored |
+| **Retrieval expansions** | Related titles, occupation families, synonyms and translations used to search wider | No. Never scored, never shown as something the user asked for |
+| **Explicit exclusions** | What the user rejected ("no temporary contracts") | Yes, as a hard requirement — but only with evidence |
+
+Every criterion carries its provenance: `explicitly-stated`, `deterministically-extracted`,
+`model-confirmed` or `model-corrected`. Anything the parser or the model thought of that the
+user did not say is demoted to a retrieval expansion, so a model-suggested "machine learning
+engineer" widens the search without ever becoming a criterion. The rules engine and the model
+are not unioned: the model may confirm, correct, remove or reclassify a parsing decision, and
+a reading it marks uncertain can never become a hard requirement.
+
+Importance is bound by clause structure, not by proximity. In *"Remote only data scientist
+roles"*, `only` qualifies **remote** — the role stays an ordinary preference.
+
 ### Fit and coverage are two numbers
 
-The headline **Preference Fit** is the weighted share of the checkable preferences that were
-answered, eased toward neutral in proportion to how much of the request could actually be
-checked. A listing that answers one preference out of six does not outrank one that answers
-five, and a listing that states nothing is not punished as if it had said no.
+The headline **Preference Fit** is the share of the checkable criteria that were answered. It
+is never multiplied by coverage: a listing that answers half the request perfectly has a high
+fit *and* a low coverage, and both are shown as they are.
 
-**Information coverage** is reported beside it: how much of the request the listing let us
-evaluate. A strong fit on thin coverage is shown as exactly that. No embedding or similarity
-value is ever displayed as a percentage — the number shown is the product's whole evaluation.
+**Information coverage** is how much of the request's importance the listing let us evaluate.
+Unknown information lowers coverage. It never lowers the fit, and it is never dressed up as a
+mismatch. No embedding or similarity value is ever displayed as a percentage.
+
+### Exclusions need evidence
+
+An exclusion is confirmed safe only by evidence, never by silence. *"No temporary contracts"*
+plus a listing that states a permanent contract is a match; plus a listing that states a
+temporary one it is a hard contradiction; plus a listing that says nothing about contract type
+it stays **unknown**.
+
+### Relevance gate
+
+A listing must clear a meaningful relevance bar before it is ranked: `strong` (the title names
+the work) or `related` (the tags or a curated family/synonym term say so). A description that
+merely brushes past the request is `weak`, and `weak` and `none` are excluded rather than used
+to fill the result list. Being in the right city is not evidence of being the right role.
+Results are therefore never padded to reach a maximum — the number of results reflects how
+many passed.
 
 ### Freshness is separate
 
 Freshness contributes nothing to Preference Fit. Listings that are known closed or expired
 are dropped before scoring; the rest carry their own freshness chip. Freshness only breaks
 ties between listings that already score the same, and a listing with no publication date is
-never treated as stale. When a request contains no preferences at all, freshness orders the
-results — but it stays a separate fact, not part of the fit.
+never treated as stale — and never outranks one that is known to be current. When a request
+contains no preferences at all, freshness orders the results, but it stays a separate fact.
 
 `interpretPreferences()` and `scorePreferenceJob()` in `src/convex/jobs/preference.ts`, with
 `compareScored()` as the ranking key. The legacy weighted scorer in `rules.ts` is still
@@ -191,8 +228,8 @@ comparison of the two for calibration.
 
 **Bands:** strong ≥ 80, good ≥ 68, fair ≥ 52, weak < 52.
 
-**Low-confidence mode:** if fewer than six listings share any signal with the request, the
-near misses are returned too — every one flagged with why it missed.
+**Low-confidence mode:** if fewer than six listings pass the relevance gate, the results are
+reported as low-confidence rather than padded.
 
 ---
 
@@ -228,10 +265,75 @@ requires German, and an ad that mentions no language at all proves nothing.
 | `/dashboard` | protected | Personal workspace — greeting, session panel, prompt composer, "how ClearRoute read your request", ranked result cards |
 | `/browse` | protected | Catalog — newest live listings with filtering, plus a plain-English hand-off |
 | `/jobs/:id` | protected | Detail page — score, apply-confidence breakdown, preview, source record, Apply |
+| `/about` | public | About — what ClearRoute is, what it evaluates, what it deliberately does not |
+| `/privacy` | public | Privacy notice — what is stored, what is never stored, retention, deletion |
 | `*` | public | 404 |
+
+The administrator console has its own route that is not listed here, not linked anywhere in
+the product, and shown to the project owner through a private channel. Its path is
+configurable per deployment through `VITE_ADMIN_ROUTE` (see **Administrator access**).
 
 Protected routes use the shared `RequireAuth` wrapper, which states the block on the page
 you asked for and returns you there after sign-in (`/auth?returnTo=…`).
+
+---
+
+## Analytics, privacy and the administrator console
+
+### What is stored
+
+Search analytics are research data. One versioned `searchEvents` row per completed or failed
+search holds the prompt, its interpretation (stated criteria with importance and provenance,
+exclusions, internal retrieval expansions), the retrieval trace, model usage and cost, and the
+outcomes; `searchResults` holds the ranked snapshot plus the notable listings that were removed
+and why; `searchInteractions` holds product-relevant interactions only (opened, expanded,
+applied, refined).
+
+* **Pseudonymous identity.** The auth subject is hashed with `ANALYTICS_SALT` before storage; no
+  email address is ever written to an event.
+* **Consent.** Raw-prompt retention is the disclosed default of the research pilot and can be
+  switched off in the workspace, after which only aggregate telemetry is kept.
+* **Retention.** `RETENTION_DAYS` (180) is enforced by a daily cron (`convex/crons.ts` →
+  `analytics.purgeExpired`), which deletes the event, its result snapshots and its interactions
+  together.
+* **Never stored:** passwords, one-time codes, session tokens, API keys, provider credentials,
+  or raw hidden model reasoning. Error text and provider notes pass through `redactSecrets()`
+  before they are written.
+* **Failures are safe.** The pipeline calls the analytics writer defensively; a failed write is
+  logged for operators and never breaks someone's search.
+
+The public promise is stated in `/privacy` and must stay true: if the retention window or the
+consent behaviour changes, that page changes with it *before* the schema does.
+
+### Administrator access
+
+The console needs two independent factors, both verified on the server for every request:
+
+1. a verified, authenticated session for the authorized email address, and
+2. a separate access code of which only a salted, iterated, one-way derivation is stored.
+
+Provision or rotate the code from the Convex CLI — the value never passes through a browser:
+
+```bash
+# uses ADMIN_ACCESS_CODE from the deployment environment
+bunx convex run admin:provisionAccessCode
+
+# or pass one explicitly (it is still returned/stored only as a hash)
+ADMIN_ACCESS_CODE=<a long random code> bunx convex run admin:provisionAccessCode
+```
+
+With no `ADMIN_ACCESS_CODE` set, one is generated and returned exactly once to the caller.
+Rotation revokes every existing administrator session. Failed attempts are rate-limited with a
+temporary lockout, and one generic `Not authorized.` covers every failure so the endpoint
+cannot be used to discover which accounts exist.
+
+Administrator test searches run through the *same* pipeline as public searches — there is no
+separate scorer — and are stored with the origin `administrator-test`, excluded from public
+adoption, behaviour and prompt-frequency metrics unless deliberately included. They still
+respect provider terms, rate limits, budgets and the cache.
+
+The route is concealment, not authorization: knowing the URL gains nothing, because the console
+renders no data until both factors pass.
 
 ---
 
@@ -241,10 +343,12 @@ you asked for and returns you there after sign-in (`/auth?returnTo=…`).
 and auth; Tailwind v4 with shadcn/ui primitives; Framer Motion for entrance animation;
 `next-themes` for theming.
 
-**No product database.** This is a deliberate v1 decision. The Convex schema contains only
-the auth tables — there is no table of jobs, searches or users beyond authentication. The
-pipeline is stateless: query in, ranked results out. The only persistence is
-`sessionStorage` in the browser, used so a detail page can render instantly and survive a
+**Persistence.** The schema holds the auth tables, provider request accounting and the shared
+source cache (`sourceBudget`, `sourceHealth`, `sourceCache`, `userUsage`), the research
+tables (`searchEvents`, `searchResults`, `searchInteractions`) and the administrator tables
+(`adminAccess`, `adminSessions`, `adminAudit`, `adminLockout`). The search pipeline itself
+remains stateless: query in, ranked results out. `sessionStorage` in the browser still lets a
+detail page render instantly and survive a
 refresh; it disappears with the tab.
 
 ```
@@ -398,6 +502,14 @@ Convex deployment (server-side, read with `process.env` inside actions):
 | `ADZUNA_APP_ID` | no | Adzuna app id — enables the India index |
 | `ADZUNA_APP_KEY` | no | Adzuna app key, from the same registration |
 | `VLY_INTEGRATION_KEY` | no | Alternative built-in AI gateway, used automatically when present |
+| `ADMIN_ACCESS_CODE` | no | Administrator access code, read once by `admin:provisionAccessCode` |
+| `ANALYTICS_SALT` | recommended | Salt for pseudonymous analytics ids (`bun convex env set ANALYTICS_SALT <random>`) |
+
+Front end, optional:
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `VITE_ADMIN_ROUTE` | no | Path of the administrator console. Unset uses the built-in default |
 
 Set a Convex environment variable with:
 
@@ -588,9 +700,11 @@ catalog browse + filtering, natural-language ranking with visible reasoning,
 per-listing detail pages with an apply-confidence breakdown, mismatch/uncertainty/freshness
 signals, light and dark themes, email or guest sign-in.
 
-**Deliberately out:** saved searches, alerts and email digests; résumé parsing, CV matching
-and application tracking; storing any history, profile or document on a server. The
-dashboard says so out loud rather than pretending.
+**Deliberately out:** saved searches, alerts and email digests; judging whether you are
+qualified for a role; applying on your behalf; anything that requires a CV or résumé. Search
+prompts and their outcomes *are* stored for matching research, under the disclosure in
+`/privacy`, with a 180-day retention window and a switch in the workspace for aggregate-only
+telemetry.
 
 ---
 
@@ -618,10 +732,11 @@ dashboard says so out loud rather than pretending.
   the model layer answers, since the request is parsed before the board is fetched.
 - **Preview snippets, not full descriptions.** The board's own page is the source of truth;
   cards show an excerpt and link out.
-- **No account database, but there *is* a shared listing cache.** Nothing about a person is
-  stored: no profile, no history, no documents, no saved search. What `sourceCache` holds is
-  public board listings, and what `sourceBudget` holds is request counters. Results still live
-  in the tab; reload in a new tab and you start a fresh search.
+- **Search analytics are stored, and the product says so.** Searches and their outcomes are
+  kept for matching research (see `/privacy`), pseudonymously and with a 180-day retention
+  window. There is still no profile, no CV, no document and no saved search; `sourceCache`
+  holds public board listings and `sourceBudget` holds request counters. Results still live in
+  the tab, so a reload in a new tab starts a fresh search.
 - **Every source request is budgeted and cached.** Each source's allowance is in
   `src/convex/jobs/budget.ts` — the published ceiling where one exists, a conservative
   self-imposed one where it does not, and always with a margin left unspent. A search

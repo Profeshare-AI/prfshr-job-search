@@ -440,11 +440,17 @@ export interface IntentDraft {
   remotePreference: "remote" | "hybrid" | "onsite" | "any";
   englishFriendly: boolean;
   /**
-   * Related titles and concepts the model expanded the request into. This is the
-   * "semantic" half of Preference Fit: it is what lets a listing using a
-   * different but related title still count as a partial match.
+   * Related titles and concepts the model expanded the request into. Used to
+   * *retrieve* wider, never to score: an expansion is not something the user
+   * asked for.
    */
   related?: string[];
+  /** Things the user explicitly rejected, in their own words. */
+  exclusions?: string[];
+  /** Terms in the deterministic draft the model says the user did not ask for. */
+  remove?: string[];
+  /** Terms the model is not confident about — never allowed to become hard. */
+  uncertain?: string[];
 }
 
 const MONTHS: Record<string, number> = {
@@ -457,6 +463,30 @@ const MONTHS: Record<string, number> = {
 const SEASONS: Record<string, number> = {
   spring: 3, summer: 6, autumn: 9, fall: 9, winter: 12, "q1": 1, "q2": 4, "q3": 7, "q4": 10,
 };
+
+/**
+ * Phrases the user explicitly rejected.
+ *
+ * Kept separate from (and deliberately simpler than) the preference-level
+ * exclusion parser so that a negated phrase can be removed from the keyword pool
+ * before it is ever treated as something the user wants.
+ */
+const NEGATION_RE =
+  /(?:^|\s)(?:no|not|without|excluding|exclude|avoid|avoiding|except|apart from|free of)\s+([a-z0-9][a-z0-9 .+#/'-]{1,40})/g;
+const NEGATION_CUT = /\b(?:and|or|but|with|in|at|for|to|that|which|who|the|a|an|as|from)\b/;
+
+function negatedPhrases(text: string): string[] {
+  const out: string[] = [];
+  NEGATION_RE.lastIndex = 0;
+  let match: RegExpExecArray | null = NEGATION_RE.exec(text);
+  while (match) {
+    const cut = NEGATION_CUT.exec(match[1]);
+    const phrase = (cut ? match[1].slice(0, cut.index) : match[1]).trim();
+    if (phrase.length > 1) out.push(phrase);
+    match = NEGATION_RE.exec(text);
+  }
+  return out;
+}
 
 /** Words already consumed by the date parser, so they never leak into keywords. */
 const DATE_WORDS = new Set([
@@ -530,9 +560,21 @@ export function parseIntentRules(query: string, now: number): IntentDraft {
 
   // Skills + domains
   const skills = SKILLS.filter((skill) => hasTerm(text, skill));
+  /*
+   * Domains, longest first.
+   *
+   * The list contains both "data scientist" and the generic "data", and both
+   * match that phrase. Keeping only the most specific match is what stops a
+   * generic word being scored as if it were the role someone asked for.
+   */
+  const matchedDomains = DOMAIN_TERMS.filter((term) => hasTerm(text, term));
   const roles: string[] = [];
-  for (const term of DOMAIN_TERMS) {
-    if (hasTerm(text, term) && !roles.includes(term)) roles.push(term);
+  for (const term of matchedDomains) {
+    const covered = matchedDomains.some(
+      (other) => other !== term && other.length > term.length && hasTerm(other, term),
+    );
+    if (covered) continue;
+    if (!roles.includes(term)) roles.push(term);
   }
 
   // Remote preference
@@ -550,8 +592,13 @@ export function parseIntentRules(query: string, now: number): IntentDraft {
       text,
     );
 
-  // Leftover meaningful words become extra role keywords.
-  const covered = normalizeText([...locations, ...skills, ...roles, ...jobTypes, ...seniority].join(" "));
+  // Leftover meaningful words become extra role keywords. Wording the user
+  // *negated* is excluded from that pool first: "no temporary contracts" must
+  // never resurface as a keyword the boards are asked for.
+  const negated = negatedPhrases(text);
+  const covered = normalizeText(
+    [...locations, ...skills, ...roles, ...jobTypes, ...seniority, ...negated].join(" "),
+  );
   const leftovers: string[] = [];
   for (const rawToken of text.split(/[^a-z0-9.+#]+/)) {
     const token = rawToken.replace(/^[.+#]+|[.+#]+$/g, "");
@@ -642,52 +689,117 @@ function unique(values: string[]): string[] {
   return out;
 }
 
+/** True when two terms name the same thing, allowing for partial wording. */
+function termsOverlap(a: string, b: string): boolean {
+  const key = normalizeText(a);
+  const other = normalizeText(b);
+  if (!key || !other) return false;
+  return key === other || hasTerm(key, other) || hasTerm(other, key);
+}
+
+/** Drop everything the model said the parser got wrong. */
+function withoutRemoved(values: string[], removed: string[]): string[] {
+  if (!removed.length) return values;
+  return values.filter((value) => !removed.some((entry) => termsOverlap(value, entry)));
+}
+
+/** Terms both readings independently produced — the model "confirmed" them. */
+function agreedWith(values: string[], other: string[]): string[] {
+  if (!other.length) return [];
+  return values.filter((value) => other.some((entry) => termsOverlap(value, entry)));
+}
+
+/**
+ * Combine the deterministic reading with the model's.
+ *
+ * This is not a union. The model is the corrective layer: it can confirm what
+ * the parser extracted, flag a term as a false extraction so it disappears, and
+ * mark a reading uncertain so it can never become a requirement. Everything it
+ * keeps is recorded with provenance, and its related titles are handed over as
+ * retrieval expansions rather than preferences.
+ */
 export function mergeIntent(
   base: IntentDraft,
   llm: LlmIntent | null,
   query: string,
 ): JobIntent {
-  const merge = llm
-    ? {
-        roleKeywords: unique([...llm.draft.roleKeywords, ...base.roleKeywords]).slice(0, 10),
-        skills: unique([...llm.draft.skills, ...base.skills]).slice(0, 10),
-        locations: unique([
-          ...base.locations,
-          ...llm.draft.locations.map((l) => canonicalizeLocation(l) ?? l).filter(Boolean),
-        ]),
-        jobTypes: JOB_TYPES.filter((t) => [...base.jobTypes, ...llm.draft.jobTypes].includes(t)),
-        seniority: unique([...base.seniority, ...llm.draft.seniority]).slice(0, 6),
-        startAfter: llm.draft.startAfter ?? base.startAfter,
-        remotePreference:
-          llm.draft.remotePreference !== "any" ? llm.draft.remotePreference : base.remotePreference,
-        englishFriendly: base.englishFriendly || llm.draft.englishFriendly,
-        queries: unique([...llm.queries, ...generateSearchQueries(base)]).slice(0, 8),
-      }
-    : {
-        ...base,
-        queries: generateSearchQueries(base),
-      };
+  if (!llm) {
+    return {
+      summary: describeIntentRules(base, query),
+      roleKeywords: base.roleKeywords,
+      skills: base.skills,
+      locations: base.locations,
+      jobTypes: base.jobTypes,
+      seniority: base.seniority,
+      searchQueries: unique(generateSearchQueries(base)).slice(0, 8),
+      remotePreference: base.remotePreference,
+      englishFriendly: base.englishFriendly,
+      ...(base.startAfter ? { startAfter: base.startAfter } : {}),
+      understoodBy: "built-in rules engine",
+    };
+  }
 
-  const summary = llm?.summary?.trim()
+  const removed = unique(llm.draft.remove ?? []);
+  const related = unique(llm.draft.related ?? []).slice(0, 8);
+
+  const roleKeywords = withoutRemoved(
+    unique([...llm.draft.roleKeywords, ...base.roleKeywords]),
+    removed,
+  ).slice(0, 10);
+  const skills = withoutRemoved(unique([...llm.draft.skills, ...base.skills]), removed).slice(0, 10);
+  const locations = withoutRemoved(
+    unique([
+      ...base.locations,
+      ...llm.draft.locations.map((l) => canonicalizeLocation(l) ?? l).filter(Boolean),
+    ]),
+    removed,
+  );
+  const jobTypes = JOB_TYPES.filter((t) => [...base.jobTypes, ...llm.draft.jobTypes].includes(t)).filter(
+    // A removal names the concept in the user's words ("full time"), not in the
+    // canonical id ("full-time"), so both forms are compared.
+    (t) => !removed.some((entry) => termsOverlap(entry, TYPE_WORDS[t]) || termsOverlap(entry, t)),
+  );
+
+  const summary = llm.summary?.trim()
     ? llm.summary.trim()
-    : describeIntentRules({ ...base, jobTypes: merge.jobTypes }, query);
+    : describeIntentRules({ ...base, jobTypes }, query);
 
   return {
     summary,
-    roleKeywords: merge.roleKeywords,
-    skills: merge.skills,
-    locations: merge.locations,
-    jobTypes: merge.jobTypes,
-    seniority: merge.seniority,
-    searchQueries: merge.queries,
-    remotePreference: merge.remotePreference,
-    englishFriendly: merge.englishFriendly,
-    ...(merge.startAfter ? { startAfter: merge.startAfter } : {}),
-    understoodBy: llm ? `AI assistant (${llm.provider}) + built-in rules` : "built-in rules engine",
-    semanticTerms: unique([...(llm?.draft.related ?? [])]).slice(0, 8),
+    roleKeywords,
+    skills,
+    locations,
+    jobTypes,
+    seniority: unique([...base.seniority, ...llm.draft.seniority]).slice(0, 6),
+    // Retrieval expansions ride along as extra queries: they widen discovery
+    // without ever being scored.
+    searchQueries: unique([
+      ...llm.queries,
+      ...generateSearchQueries({ ...base, roleKeywords: unique([...base.roleKeywords, ...related]) }),
+    ]).slice(0, 10),
+    remotePreference:
+      llm.draft.remotePreference !== "any" ? llm.draft.remotePreference : base.remotePreference,
+    englishFriendly: base.englishFriendly || llm.draft.englishFriendly,
+    ...((llm.draft.startAfter ?? base.startAfter)
+      ? { startAfter: (llm.draft.startAfter ?? base.startAfter) as string }
+      : {}),
+    understoodBy: `AI assistant (${llm.provider}) + built-in rules`,
+    // Internal: search expansions, never requirements.
+    semanticTerms: related,
+    modelConfirmed: agreedWith(
+      [...base.roleKeywords, ...base.skills, ...base.locations],
+      [...llm.draft.roleKeywords, ...llm.draft.skills, ...llm.draft.locations],
+    ).slice(0, 12),
+    ...(removed.length ? { modelRemoved: removed.slice(0, 10) } : {}),
+    ...(llm.draft.uncertain?.length
+      ? { uncertainTerms: unique(llm.draft.uncertain).slice(0, 10) }
+      : {}),
+    ...(llm.draft.exclusions?.length
+      ? { modelExclusions: unique(llm.draft.exclusions).slice(0, 8) }
+      : {}),
     // Only present when the model answered *and* reported its spend. Backs the
     // budget readout in the intent panel.
-    ...(llm?.usage ? { ai: { provider: llm.provider, ...llm.usage } } : {}),
+    ...(llm.usage ? { ai: { provider: llm.provider, ...llm.usage } } : {}),
   };
 }
 

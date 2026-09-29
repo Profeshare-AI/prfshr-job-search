@@ -427,3 +427,126 @@ vague-vs-specific request guidance.
 - The labelled evaluation collection is still to come. The engine is built for it: pure
   functions, a per-facet `method`/`state` record, and a shadow comparison reporting rank
   movement, mean score delta and how many listings each engine drops.
+
+---
+
+## 2026-09-29 — Corrective build: Preference Fit integrity, simplified UX, private analytics
+
+**Changed**
+
+*Preference interpretation (`src/convex/jobs/preference.ts`, `rules.ts`, `llm.ts`)*
+
+- The request is now split into three deliberately separate concepts: **user-stated preferences**
+  (the only thing Preference Fit scores), **retrieval expansions** (related titles, families,
+  synonyms and translations — search-only, never scored, never shown as something the user asked
+  for) and **explicit exclusions**.
+- Every criterion carries provenance (`explicitly-stated`, `deterministically-extracted`,
+  `model-confirmed`, `model-corrected`). Anything neither written by the user nor proved by the
+  detection is demoted to a retrieval expansion.
+- The model is no longer unioned with the rules. It gained `remove`, `exclusions`, `uncertain`
+  and `domains` fields, so it can confirm, correct, remove and reclassify — and a reading it
+  marks uncertain can never become a hard requirement.
+- Importance is bound by clause structure: a qualifier attaches to the criterion immediately
+  before it, else to the next one after it (filler skipped), else nowhere. *"Remote only data
+  scientist roles"* now hardens **remote** and leaves the role an ordinary preference.
+- Exclusions require evidence: permanent contract → match, temporary contract → hard
+  contradiction, silence → unknown. Absence of an excluded phrase is no longer treated as proof.
+- Hard constraints are strict: *"remote only"* plus hybrid or on-site is a hard contradiction;
+  adjacency only produces a partial match for a *preferred* work mode.
+- Preference Fit is no longer multiplied by coverage. Fit is the share of checkable criteria
+  answered; coverage is how much of the request could be checked; they are reported separately.
+- A topical relevance gate (`strong`/`related`, else excluded) replaced the old "any signal"
+  rule, so results are never padded with jobs that merely share a city or a word.
+- Skills are read as interests: a listing that never mentions a named tool is `unknown`, not a
+  mismatch.
+- Freshness tie-breaking was inverted to the documented behaviour: a dated listing now precedes
+  an undated one instead of the other way round.
+
+*Public product*
+
+- Landing page and dashboard simplified: scoring weights, taxonomy vocabulary, pipeline
+  mechanics, cache diagnostics, per-source request counts, token/quota readouts and the AI
+  provider name are gone from the public surface. The interpretation panel now shows only what
+  was asked for, how strongly, and what to do if it was misread.
+- Removed every Profile Fit and résumé reference from the public product, along with the "nothing
+  is stored" claim that analytics would have made false.
+- Added `/about` (what ClearRoute is, what it evaluates, what it does not) and `/privacy` (what is
+  stored, what never is, pseudonymity, retention, deletion) plus the footer byline
+  "ClearRoute by Profeshare AI".
+
+*Analytics and administrator console*
+
+- New schema tables: `searchEvents` (versioned: prompt, interpretation with provenance, retrieval
+  trace, model usage and cost, outcomes, retention boundary), `searchResults` (ranked snapshot
+  plus the removed samples and why) and `searchInteractions`.
+- `convex/analytics.ts` writes them best-effort — a failed analytics write never breaks a search
+  — with pseudonymous ids (salted hash of the auth subject), a consent switch for aggregate-only
+  telemetry, and `redactSecrets()` in front of every free-text field. A daily cron purges past the
+  180-day window.
+- `convex/admin.ts` adds a hidden administrator area guarded by two server-verified factors: a
+  verified session for the authorized email and a separate access code stored only as a salted,
+  iterated hash, with lockout, expiring sessions, an audit trail and one generic rejection for
+  every failure mode.
+- `convex/adminAnalytics.ts` + `src/pages/AdminConsole.tsx` add the private console: time views
+  with previous-period comparison, overview metrics, charts, a filtered event list, a collapsible
+  prompt investigation, and a prompt-testing workspace that runs the *same* pipeline with origin
+  `administrator-test`.
+
+**Verified**
+
+- `bunx convex dev --once` → functions ready; `bunx tsc -b --noEmit` → exit 0.
+- `bun test` → **317 pass / 0 fail / 792 assertions** across 14 files, including the new
+  `src/convex/jobs/preference.integrity.test.ts` (interpretation-to-ranking path).
+- Live public search, the corrective prompt: *"Remote only data scientist roles in Berlin, must be
+  English-friendly, no temporary contracts."* → mode `explicit-role`; **exactly five** stated
+  criteria (role `data scientist` soft, work mode `Remote` hard, location `Berlin` soft,
+  `English-friendly` hard, exclusion `Not Contract` hard), all `explicitly-stated`; retrieval
+  expansions (`machine learning engineer`, `data analyst`, `research scientist`, `ai engineer`)
+  held separately; 4,374 listings scanned, 97 dropped on hard constraints, 302 on the relevance
+  gate, 10 returned. Model-appended role criteria are gone — earlier in the same session the model
+  was still contributing nine extra scored criteria.
+- Analytics persistence confirmed via `convex data searchEvents`: versioned rows (`engineVersion`
+  2.1.0, `parserVersion` `rules+model-corrections/1`), consent `granted`, per-source request
+  counts, stage timings, model usage/cost and a `retentionExpiresAt` 180 days out.
+- Authorization: `convex run adminAnalytics:overview` with a bogus token → `Not authorized.`;
+  `convex run jobs/search:adminTestSearch` with a bogus token → `Not authorized.`
+- Two more live cases, after keyword hygiene was tightened mid-session (seniority-only words and
+  contract words are no longer criteria, and a keyword contained in a longer one is its detail
+  rather than a second criterion): *"senior accountant in Munich, permanent, no internships"* →
+  exactly four criteria (exclusion, contract `Full time`, location `Munich`, role
+  `senior accountant`), 9 dropped on hard constraints, 298 by the relevance gate, 4 returned, top
+  three treasury / audit / accounting-expertise listings explained as same-family matches;
+  *"I want to work in sustainability"* → `domain-exploration`, 9 returned from a 212-listing drop,
+  100-fit ESG reporting roles on top. A broad request (*"find me a job"*) now reports
+  `lowConfidence: true` alongside its guidance.
+- `bunx eslint src` → the same 14 pre-existing problems as before this session, none in the files
+  touched here.
+
+**Decisions**
+
+- **`method` stays internal.** Facets still record whether rules, lexical, taxonomy or semantic
+  matching produced a conclusion, but that label is administrator data now; the public detail text
+  explains the conclusion instead.
+- **The model's retrieval expansions feed the queries, not the score.** This keeps the useful part
+  of semantic expansion (differently worded and multilingual listings are still found) while
+  removing the part that quietly changed what the user was deemed to have asked for.
+- **Raw-prompt retention is the disclosed default of the pilot, not a silent one.** The workspace
+  states it, `/privacy` documents it, and a per-browser switch drops to aggregate-only telemetry.
+- **Administrator tests keep the public request budget's source allowances.** They skip only the
+  per-user hourly cap, which is a controlled server-side policy; provider terms, rate limits,
+  budgets and the cache still apply.
+- **Route concealment is explicitly not authorization.** The console renders nothing until both
+  factors pass on the server, and the endpoint answers every failure identically.
+
+**Open**
+
+- The administrator route's default path and `VITE_ADMIN_ROUTE` are documented; provisioning an
+  access code requires `ADMIN_ACCESS_CODE` in the deployment environment or one generated by
+  `admin:provisionAccessCode`.
+- `ANALYTICS_SALT` should be set on the deployment so pseudonymous ids are deployment-specific.
+- An administrator still needs to sign in with the authorized email for the first factor; the
+  console cannot be reached from a guest session.
+- `VLY_APP_NAME` on the dev deployment is still `Job AI Search` and still overrides the sign-in
+  email name (unchanged from the previous entry).
+- Feedback on individual results ("relevant / not relevant") is deliberately not in this pass; the
+  interaction records in place are the ground it will be built on.

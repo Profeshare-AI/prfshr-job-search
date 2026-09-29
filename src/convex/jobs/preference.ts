@@ -13,22 +13,28 @@
  *   interpretPreferences  read the request into preferences + a search mode
  *   scorePreferenceJob    evaluate one listing against those preferences
  *
- * Four methods are used, and every facet records which one produced its answer:
+ * Three methods produce scored conclusions, and every facet records which:
  *
  *   deterministic  rules over structured facts (location, work mode, contract,
  *                  schedule, pay, dates, language)
- *   lexical        the exact terminology appears in the listing
- *   taxonomy       a related term from the same occupation family / synonym set
- *   semantic       concept expansion contributed by the language model
+ *   lexical        the user's own terminology appears in the listing
+ *   taxonomy       a curated sibling, synonym or translation — a differently
+ *                  worded but genuinely equivalent occupation
  *
- * Three rules shape the whole file:
+ * The language model's related titles are *retrieval expansions*: they widen the
+ * search and are never scored (see `PreferencePlan.retrievalExpansions`).
  *
- *   1. Missing information is a state ("unknown"), never a mismatch, and never a
+ * Five rules shape the whole file:
+ *
+ *   1. Only what the user stated may affect fit. Expansion is not requirement.
+ *   2. Missing information is a state ("unknown"), never a mismatch, and never a
  *      point in the user's favour.
- *   2. A hard contradiction is reported only when the user was explicit AND the
- *      listing states something that actually contradicts them.
- *   3. Freshness contributes nothing to fit. It is a separate fact and only ever
- *      a tie-breaker.
+ *   3. A hard contradiction needs an explicit requirement *and* a listing that
+ *      states the contradiction. Adjacency never overrides a hard constraint.
+ *   4. An exclusion is confirmed safe only by evidence, never by silence.
+ *   5. Preference Fit and Information Coverage are separate: fit is the quality
+ *      of alignment among what could be checked, coverage is how much of the
+ *      request could be checked at all. Freshness is neither; it tie-breaks.
  */
 
 import {
@@ -36,6 +42,7 @@ import {
   RELATED_TYPES,
   SKILLS,
   canonicalJobTypes,
+  canonicalizeLocation,
   findPlace,
   hasTerm,
 } from "./rules";
@@ -54,6 +61,7 @@ import {
   type PreferenceImportance,
   type ScoredJob,
   type SearchMode,
+  type TopicalRelevance,
 } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -81,16 +89,6 @@ const MODE_BOOST: Record<SearchMode, Partial<Record<PreferenceArea, number>>> = 
 const NO_PREFERENCE_SCORE = 52;
 /** Score used when every stated preference came back "unknown". */
 const NEUTRAL_FIT = 50;
-/**
- * How much of the fit is discounted for preferences the listing never addressed.
- *
- * Missing information is not a mismatch, so it must not zero a listing out — but
- * a listing that answers one preference out of six must not outrank a listing
- * that answers five. The discount is the honest middle: fit falls back toward
- * neutral as coverage drops, and the coverage number is shown alongside it.
- */
-const COVERAGE_FLOOR = 0.65;
-
 /* -------------------------------------------------------------------------- */
 /*  Small text helpers                                                        */
 /* -------------------------------------------------------------------------- */
@@ -151,27 +149,182 @@ function stronger(a: PreferenceImportance, b: PreferenceImportance): PreferenceI
   return importanceRank(a) >= importanceRank(b) ? a : b;
 }
 
-/** Importance of the words sitting around one value occurrence. */
-function importanceAt(tokens: string[], start: number, length: number): PreferenceImportance {
-  const from = Math.max(0, start - 3);
-  const to = Math.min(tokens.length, start + length + 2);
-  const near = tokens.slice(from, to);
-  if (near.some((token) => HARD_MARKERS.has(token))) return "hard";
-  if (near.some((token) => STRONG_MARKERS.has(token))) return "strong";
-  return "soft";
+/**
+ * Filler between a qualifier and the criterion it qualifies. "must be
+ * English-friendly" and "only a remote role" both hide their criterion behind
+ * one of these, and skipping them is what keeps the qualifier attached.
+ */
+const QUALIFIER_FILLER = new Set([
+  "be", "is", "are", "am", "was", "were", "being", "been", "have", "has", "had",
+  "a", "an", "the", "to", "in", "at", "on", "for", "with", "as", "of", "and",
+  "role", "roles", "job", "jobs", "work", "working", "position", "positions",
+  "fully", "completely", "100", "percent", "really", "able", "open",
+]);
+
+interface ClauseOccurrence {
+  /** Normalized variant that was found, so the binder can name its target. */
+  key: string;
+  start: number;
+  length: number;
 }
 
-/** Best importance found for a value anywhere in the request. */
-function importanceAcross(clauses: string[][], variants: string[]): PreferenceImportance {
-  let best: PreferenceImportance = "soft";
-  for (const tokens of clauses) {
-    for (const variant of variants) {
-      const index = findPhrase(tokens, variant);
-      if (index < 0) continue;
-      best = stronger(best, importanceAt(tokens, index, tokenize(variant).length));
+/** First token at or after `from` that is not filler. */
+function skipFiller(tokens: string[], from: number): number {
+  let index = from;
+  while (index < tokens.length && QUALIFIER_FILLER.has(tokens[index])) index += 1;
+  return index;
+}
+
+/**
+ * Attach each importance word to the criterion it actually qualifies.
+ *
+ * A qualifier binds to the criterion immediately before it ("remote only"),
+ * otherwise to the next criterion after it, filler words skipped ("must be
+ * English-friendly"). A qualifier that cannot be attached demonstrates nothing,
+ * and the criterion stays ordinary — which is exactly why "Remote only data
+ * scientist roles" hardens *remote* and leaves the role a normal preference.
+ */
+function bindClauseImportance(
+  tokens: string[],
+  occurrences: ClauseOccurrence[],
+): Map<string, PreferenceImportance> {
+  const bound = new Map<string, PreferenceImportance>();
+  const bind = (key: string, strength: PreferenceImportance) => {
+    const current = bound.get(key);
+    bound.set(key, current ? stronger(current, strength) : strength);
+  };
+  const nearest = (from: number, direction: 1 | -1): ClauseOccurrence | undefined => {
+    let best: ClauseOccurrence | undefined;
+    for (const occurrence of occurrences) {
+      if (direction === 1 ? occurrence.start <= from : occurrence.start >= from) continue;
+      if (!best) {
+        best = occurrence;
+        continue;
+      }
+      const distance = Math.abs(occurrence.start - from);
+      const current = Math.abs(best.start - from);
+      // Ties go forward: a pre-modifier ("only remote") is more common than a
+      // post-modifier, and the forward token starts the criterion phrase.
+      if (distance < current || (distance === current && occurrence.start > best.start)) {
+        best = occurrence;
+      }
+    }
+    return best;
+  };
+
+  tokens.forEach((token, index) => {
+    const strength: PreferenceImportance | undefined = HARD_MARKERS.has(token)
+      ? "hard"
+      : STRONG_MARKERS.has(token)
+        ? "strong"
+        : undefined;
+    if (!strength) return;
+    const attached =
+      occurrences.find((occurrence) => occurrence.start + occurrence.length === index) ??
+      occurrences.find((occurrence) => occurrence.start === skipFiller(tokens, index + 1)) ??
+      nearest(index, 1) ??
+      nearest(index, -1);
+    if (attached) bind(attached.key, strength);
+  });
+  return bound;
+}
+
+/**
+ * Seniority words that describe how much experience a role wants, not which role
+ * it is. "Senior accountant" is a role; a bare "senior" is not a criterion.
+ */
+const SENIORITY_ONLY = new Set([
+  "senior",
+  "junior",
+  "mid level",
+  "entry level",
+  "lead",
+  "principal",
+  "staff",
+  "head of",
+  "director",
+  "vp",
+  "chief",
+  "graduate",
+  "student",
+  "masters",
+  "master's",
+  "phd",
+  "postdoc",
+]);
+
+/**
+ * Keep only the role keywords worth scoring.
+ *
+ * Two filters, both about not scoring noise: a bare seniority word is not a
+ * role, and a keyword contained inside a longer one is its detail rather than a
+ * separate criterion ("accountant" inside "senior accountant").
+ */
+function scorableKeywords(keywords: string[]): string[] {
+  return keywords.filter((keyword) => {
+    const key = normalizeText(keyword);
+    if (!key || SENIORITY_ONLY.has(key)) return false;
+    // A contract word ("permanent", "internship") belongs to the contract
+    // criterion, which already handles it. It is not a field of work.
+    if (canonicalJobTypes([keyword]).length > 0) return false;
+    return !keywords.some((other) => {
+      const otherKey = normalizeText(other);
+      return otherKey !== key && otherKey.length > key.length && hasTerm(otherKey, key);
+    });
+  });
+}
+
+/** Every normalized wording that counts as naming this criterion. */
+function criterionKeys(preference: RequestedPreference): string[] {
+  const variants = preference.variants ?? preference.values;
+  return [...new Set([...variants, ...preference.values].map(normalizeText).filter(Boolean))];
+}
+
+/**
+ * Decide every criterion's importance from the whole request at once.
+ *
+ * This has to be a second pass, after every criterion is known: a qualifier can
+ * only be attached to the right criterion if the competing criteria are on the
+ * table. "Remote only data scientist roles" binds "only" to *remote* precisely
+ * because "data scientist" is also a candidate and sits further away.
+ *
+ * Exclusions are left alone — "no X" is explicit by construction, and their
+ * strength comes from the user's own negation rather than from a nearby word.
+ */
+function bindImportance(tokenClauses: string[][], preferences: RequestedPreference[]): void {
+  const bound = new Map<string, PreferenceImportance>();
+
+  for (const tokens of tokenClauses) {
+    const occurrences: ClauseOccurrence[] = [];
+    for (const preference of preferences) {
+      if (preference.area === "exclusion") continue;
+      for (const variant of preference.variants ?? preference.values) {
+        const start = findPhrase(tokens, variant);
+        if (start < 0) continue;
+        for (const key of criterionKeys(preference)) {
+          occurrences.push({ key, start, length: tokenize(variant).length });
+        }
+      }
+    }
+    if (!occurrences.length) continue;
+    for (const [key, strength] of bindClauseImportance(tokens, occurrences)) {
+      const current = bound.get(key);
+      bound.set(key, current ? stronger(current, strength) : strength);
     }
   }
-  return best;
+
+  for (const preference of preferences) {
+    if (preference.area === "exclusion") continue;
+    let best: PreferenceImportance | undefined;
+    for (const key of criterionKeys(preference)) {
+      const strength = bound.get(key);
+      if (strength && (!best || importanceRank(strength) > importanceRank(best))) best = strength;
+    }
+    if (!best) continue;
+    // A reading that is not certain may be preferred, never required.
+    preference.importance =
+      preference.uncertain && best === "hard" ? "strong" : best;
+  }
 }
 
 /**
@@ -651,6 +804,19 @@ const UNPAID_RE = /\b(unpaid|volunteer|no salary|without pay|benevolat|ehrenamtl
 /*  Reading the request                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Where a criterion came from.
+ *
+ * Retrieval expansions are deliberately absent from this union: they are not
+ * criteria at all and live in `PreferencePlan.retrievalExpansions`, where they
+ * can widen discovery without ever scoring anything.
+ */
+export type PreferenceProvenance =
+  | "explicitly-stated"
+  | "deterministically-extracted"
+  | "model-confirmed"
+  | "model-corrected";
+
 export interface RequestedPreference {
   id: string;
   area: PreferenceArea;
@@ -659,18 +825,36 @@ export interface RequestedPreference {
   importance: PreferenceImportance;
   /** Canonical values the listing is checked against. */
   values: string[];
+  /**
+   * Wording that counts as naming this criterion. Qualifiers bind to these, so
+   * "remote only" hardens the work mode and nothing else.
+   */
+  variants?: string[];
   kind?: "contract" | "location" | "workMode" | "skill" | "domain" | "phrase";
   raw: string;
+  /** Who decided this criterion is one the user stated. */
+  provenance: PreferenceProvenance;
+  /** A reading that is not certain, and therefore never allowed to be hard. */
+  uncertain?: boolean;
 }
 
 export interface PreferencePlan {
   mode: SearchMode;
   modeLabel: string;
+  /**
+   * What the user actually asked for. The only thing Preference Fit scores, and
+   * the only thing the public interpretation summary shows.
+   */
   preferences: RequestedPreference[];
+  /**
+   * Related titles, occupation families and adjacent concepts used to *retrieve*
+   * listings. They may improve discovery; they never earn or lose fit, never
+   * become hard constraints and are never presented as something the user asked
+   * for.
+   */
+  retrievalExpansions: string[];
   /** Set only when the reading is too broad to be confident. */
   guidance?: string;
-  /** Concept expansion used by the semantic pass. */
-  semanticTerms: string[];
 }
 
 const TYPE_QUERY_WORDS: Record<JobType, string[]> = {
@@ -690,6 +874,29 @@ const TYPE_LABELS: Record<JobType, string> = {
   "part-time": "Part time",
   contract: "Contract",
 };
+
+const MONTH_NAMES = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+
+/**
+ * Wording that counts as the user asking for an English-friendly environment.
+ * Mirrors the rules engine's own phrase list, so an inference the rules made from
+ * the user's words survives, while one only the model guessed at does not.
+ */
+const LANGUAGE_VARIANTS = [
+  "english",
+  "english friendly",
+  "english speaking",
+  "english-friendly",
+  "english-speaking",
+  "in english",
+  "english required",
+  "english is fine",
+  "no french",
+  "international team",
+];
 
 const AREA_TITLES: Record<PreferenceArea, string> = {
   role: "Role fit",
@@ -796,14 +1003,110 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
   const excludedValues = new Set<string>();
   const exclusionKey = (kind: string, value: string) => `${kind}:${normalizeText(value)}`;
 
-  const add = (preference: Omit<RequestedPreference, "id">) => {
-    const key = `${preference.area}:${[...preference.values].map(normalizeText).sort().join("|")}`;
-    const existing = preferences.find((entry) => entry.id === key);
-    if (existing) {
-      existing.importance = stronger(existing.importance, preference.importance);
+  /*
+   * The model is allowed to overrule the parser, so its reading is recorded
+   * separately instead of being merged blindly:
+   *   modelConfirmed  the model agreed with what the rules extracted
+   *   modelRemoved    the model said the parser was wrong about this term
+   *   uncertainTerms  the model was not sure — nothing here may become hard
+   */
+  const confirmed = (intent.modelConfirmed ?? []).map(normalizeText).filter(Boolean);
+  const removedTerms = (intent.modelRemoved ?? []).map(normalizeText).filter(Boolean);
+  const unsureTerms = (intent.uncertainTerms ?? []).map(normalizeText).filter(Boolean);
+
+  const overlaps = (haystack: string, needles: string[]) => {
+    const key = normalizeText(haystack);
+    if (!key) return false;
+    return needles.some((needle) => needle === key || hasTerm(key, needle) || hasTerm(needle, key));
+  };
+
+  /**
+   * True when the user's own words name this criterion.
+   *
+   * Hyphens are flattened first: someone who typed "English-friendly" stated the
+   * language requirement just as plainly as someone who typed "English friendly".
+   */
+  const promptTexts = clauses.map((clause) => clause.replace(/-/g, " "));
+  const statedInPrompt = (raw: string, variants: string[]) =>
+    promptTexts.some((clause) =>
+      [raw, ...variants].some((value) => {
+        const key = normalizeText(value).replace(/-/g, " ");
+        return Boolean(key) && hasTerm(clause, key);
+      }),
+    );
+
+  /**
+   * Related titles and keywords the model thought of that the user never said.
+   * They widen retrieval and are never scored.
+   */
+  const inferred = new Set<string>();
+
+  /**
+   * Record one criterion.
+   *
+   * Only what the user actually asked for may affect Preference Fit. A criterion
+   * that the parser or the model invented is not dropped on the floor — it is
+   * turned into a retrieval expansion, which helps find listings without ever
+   * becoming a requirement. That is the whole difference between "the user wants
+   * this" and "this might be worth searching for".
+   *
+   * A criterion the user stated in their own words is never dropped: the model
+   * corrects the parser's inferences, not the user. A criterion the model was
+   * unsure about keeps its place but can never be a hard requirement.
+   */
+  const add = (
+    preference: Omit<RequestedPreference, "id" | "provenance">,
+    options: {
+      provenance?: PreferenceProvenance;
+      /** For corrections the model is entitled to make (see the exclusion call). */
+      allowUnstated?: boolean;
+      /** Set when the detection itself proves the user said it. */
+      stated?: boolean;
+    } = {},
+  ) => {
+    const values = preference.values;
+    const variants = preference.variants ?? values;
+    const stated = options.stated ?? statedInPrompt(preference.raw, variants);
+    const disputed =
+      overlaps(preference.raw, removedTerms) || values.some((value) => overlaps(value, removedTerms));
+    if (!stated && disputed) return;
+    if (!stated && !options.allowUnstated) {
+      for (const variant of variants) {
+        const key = normalizeText(variant);
+        if (key && !claimedTopical.has(key)) inferred.add(key);
+      }
       return;
     }
-    preferences.push({ ...preference, id: key });
+
+    const uncertain =
+      preference.uncertain === true ||
+      overlaps(preference.raw, unsureTerms) ||
+      values.some((value) => overlaps(value, unsureTerms));
+    const importance: PreferenceImportance =
+      uncertain && preference.importance === "hard" ? "strong" : preference.importance;
+    const provenance: PreferenceProvenance =
+      options.provenance ??
+      (stated
+        ? "explicitly-stated"
+        : overlaps(preference.raw, confirmed) || values.some((value) => overlaps(value, confirmed))
+          ? "model-confirmed"
+          : "deterministically-extracted");
+
+    const key = `${preference.area}:${[...values].map(normalizeText).sort().join("|")}`;
+    const existing = preferences.find((entry) => entry.id === key);
+    if (existing) {
+      existing.importance = stronger(existing.importance, importance);
+      if (provenance === "explicitly-stated") existing.provenance = provenance;
+      if (!uncertain) delete existing.uncertain;
+      return;
+    }
+    preferences.push({
+      ...preference,
+      id: key,
+      importance,
+      provenance,
+      ...(uncertain ? { uncertain: true } : {}),
+    });
   };
 
   /* Exclusions first: "no temporary contracts" is a preference in its own right. */
@@ -825,6 +1128,38 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     }
   }
 
+  /*
+   * Exclusions the model reclassified out of the positive reading. They are
+   * recorded as corrections, so a parser mistake is visible in the plan instead
+   * of being silently merged into what the user "wanted".
+   */
+  for (const phrase of intent.modelExclusions ?? []) {
+    const trimmed = normalizeText(phrase);
+    if (!trimmed) continue;
+    const { kind, value, label } = classifyExcludedValue(trimmed);
+    if (
+      preferences.some(
+        (entry) => entry.area === "exclusion" && normalizeText(entry.values[0]) === normalizeText(value),
+      )
+    ) {
+      continue;
+    }
+    add(
+      {
+        area: "exclusion",
+        label: `Not ${label}`,
+        importance: "hard",
+        values: [value],
+        ...(kind ? { kind } : {}),
+        raw: trimmed,
+      },
+      // The model is allowed to reclassify, which is a correction rather than an
+      // invention: it is reporting that the user did reject this.
+      { provenance: "model-corrected", allowUnstated: true },
+    );
+    if (kind) excludedValues.add(exclusionKey(kind, value));
+  }
+
   /* Work mode. */
   for (const [mode, phrases] of Object.entries(WORK_MODE_QUERY) as Array<
     [Exclude<WorkMode, "unknown">, string[]]
@@ -836,8 +1171,9 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
       add({
         area: "workMode",
         label: mode === "onsite" ? "On-site" : mode === "remote" ? "Remote" : "Hybrid",
-        importance: importanceAcross(tokenClauses, phrases),
+        importance: "soft",
         values: [mode],
+        variants: phrases,
         raw: clause,
       });
       break;
@@ -851,8 +1187,9 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "contract",
       label: TYPE_LABELS[type as JobType],
-      importance: importanceAcross(tokenClauses, TYPE_QUERY_WORDS[type as JobType]),
+      importance: "soft",
       values: [type],
+      variants: TYPE_QUERY_WORDS[type as JobType],
       raw: type,
     });
   }
@@ -860,25 +1197,19 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
   /* Location. */
   for (const location of intent.locations) {
     if (excludedValues.has(exclusionKey("location", location))) continue;
-    const mentioned = clauses.some((clause) => {
-      const resolved = findPlace(clause) ?? findPlace(normalizeText(clause));
-      return resolved?.canonical === location || hasTerm(clause, normalizeText(location));
-    });
-    const importance = mentioned
-      ? importanceAcross(
-          tokenClauses.filter((tokens) =>
-            tokens.some((token) => hasTerm(token, normalizeText(location))),
-          ),
-          [location],
-        )
-      : "soft";
-    add({
-      area: "location",
-      label: location,
-      importance: importance === "soft" ? "soft" : importance,
-      values: [location],
-      raw: location,
-    });
+    add(
+      {
+        area: "location",
+        label: location,
+        importance: "soft",
+        values: [location],
+        variants: [location],
+        raw: location,
+      },
+      // The gazetteer proves the user named a place even when the canonical
+      // spelling differs from theirs ("München" resolving to Munich).
+      { stated: clauses.some((clause) => canonicalizeLocation(clause) === location) },
+    );
   }
 
   /* Start date. */
@@ -887,8 +1218,9 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "startDate",
       label: `Start ${intent.startAfter}`,
-      importance: importanceAcross(tokenClauses, [year, "start", "starting"]),
+      importance: "soft",
       values: [intent.startAfter],
+      variants: [year, MONTH_NAMES[Number(intent.startAfter.slice(5, 7)) - 1] ?? "", "start", "starting", "from"],
       raw: intent.startAfter,
     });
   }
@@ -898,8 +1230,9 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "language",
       label: "English-friendly",
-      importance: importanceAcross(tokenClauses, ["english", "english friendly", "english speaking"]),
+      importance: "soft",
       values: ["english"],
+      variants: LANGUAGE_VARIANTS,
       raw: "english",
     });
   }
@@ -911,21 +1244,33 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "skills",
       label: skill,
-      importance: importanceAcross(tokenClauses, [skill]),
+      importance: "soft",
       values: [skill],
+      variants: [skill],
       raw: skill,
     });
     claimedTopical.add(skill);
   }
 
-  /* Role and domain. */
-  for (const keyword of intent.roleKeywords) {
+  /*
+   * Role and domain.
+   *
+   * A keyword the user negated is never a positive preference, whatever the
+   * parser did with it upstream: an exclusion can only ever be an exclusion.
+   */
+  const exclusionText = preferences
+    .filter((preference) => preference.area === "exclusion")
+    .map((preference) => normalizeText(preference.raw));
+  for (const keyword of scorableKeywords(intent.roleKeywords)) {
+    const key = normalizeText(keyword);
+    if (exclusionText.some((entry) => hasTerm(entry, key) || hasTerm(key, entry))) continue;
     const area: PreferenceArea = isRoleTerm(keyword) ? "role" : "domain";
     add({
       area,
       label: keyword,
-      importance: importanceAcross(tokenClauses, [keyword]),
+      importance: "soft",
       values: [keyword],
+      variants: [keyword],
       raw: keyword,
     });
     claimedTopical.add(normalizeText(keyword));
@@ -939,8 +1284,9 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "responsibilities",
       label: term,
-      importance: importanceAcross(tokenClauses, [term]),
+      importance: "soft",
       values: [term],
+      variants: [term],
       raw: term,
     });
   }
@@ -953,15 +1299,17 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "compensation",
       label: `At least ${Math.round(statedPay)}`,
-      importance: importanceAcross(tokenClauses, ["salary", "paid", "pay", "compensation"]),
+      importance: "soft",
       values: [`min:${statedPay}`],
+      variants: ["salary", "paid", "pay", "compensation"],
       raw: String(statedPay),
     });
   } else if (wantsUnpaid || wantsPaid) {
     add({
       area: "compensation",
       label: wantsUnpaid ? "Unpaid is fine" : "Paid",
-      importance: importanceAcross(tokenClauses, [wantsUnpaid ? "unpaid" : "paid", "salary"]),
+      importance: "soft",
+      variants: [wantsUnpaid ? "unpaid" : "paid", "salary"],
       values: [wantsUnpaid ? "unpaid" : "paid"],
       raw: wantsUnpaid ? "unpaid" : "paid",
     });
@@ -982,8 +1330,9 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     add({
       area: "schedule",
       label: scheduleTerms[0],
-      importance: importanceAcross(tokenClauses, scheduleTerms),
+      importance: "soft",
       values: scheduleTerms,
+      variants: scheduleTerms,
       raw: scheduleTerms[0],
     });
   }
@@ -1000,7 +1349,19 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
     });
   }
 
-  const semanticTerms = (intent.semanticTerms ?? []).map((term) => normalizeText(term)).filter(Boolean);
+  /*
+   * Retrieval expansions: related titles the model came up with. They are used
+   * to search wider, and for nothing else — the old code scored their literal
+   * occurrence as if the user had asked for them.
+   */
+  bindImportance(tokenClauses, preferences);
+
+  const retrievalExpansions = [
+    ...(intent.semanticTerms ?? []),
+    ...inferred,
+  ]
+    .map((term) => normalizeText(term))
+    .filter(Boolean);
   const roleIntent = preferences.some((preference) => preference.area === "role");
   const fieldIntent = preferences.some(
     (preference) => preference.area === "domain" || preference.area === "skills",
@@ -1016,7 +1377,7 @@ export function interpretPreferences(intent: JobIntent, query: string, now: numb
           ? "field exploration"
           : "broad request",
     preferences,
-    semanticTerms,
+    retrievalExpansions,
   };
 
   if (mode === "broad") {
@@ -1095,6 +1456,12 @@ interface FacetOutcome {
   detail: string;
   evidence?: string;
   method: MatchMethod;
+  /**
+   * How well evidenced the conclusion is: 1 = the title says it, 0.8 = the tags
+   * or contract type say it, 0.5 = only the description mentions it. Used by the
+   * relevance gate, which drops listings that only brush past the request.
+   */
+  strength?: number;
 }
 
 function placesOverlap(a: string, b: string): boolean {
@@ -1112,11 +1479,11 @@ function placesOverlap(a: string, b: string): boolean {
 
 function topicalOutcome(
   preference: RequestedPreference,
-  plan: PreferencePlan,
+  _plan: PreferencePlan,
   job: NormalizedJob,
   window: JobTextWindow,
 ): FacetOutcome {
-  /* 1. Exact terminology. */
+  /* 1. The user's own terminology. */
   let best = 0;
   let hit = "";
   for (const value of preference.values) {
@@ -1130,6 +1497,7 @@ function topicalOutcome(
     return {
       state: "match",
       method: "lexical",
+      strength: 1,
       detail: `The title names "${hit}".`,
       ...(evidenceFor(hit, job) ? { evidence: evidenceFor(hit, job) } : {}),
     };
@@ -1138,6 +1506,7 @@ function topicalOutcome(
     return {
       state: "match",
       method: "lexical",
+      strength: 0.8,
       detail: `Listed under "${hit}".`,
       ...(evidenceFor(hit, job) ? { evidence: evidenceFor(hit, job) } : {}),
     };
@@ -1146,12 +1515,18 @@ function topicalOutcome(
     return {
       state: "partial",
       method: "lexical",
+      strength: 0.5,
       detail: `"${hit}" only appears in the description, not in the title or tags.`,
       ...(evidenceFor(hit, job) ? { evidence: evidenceFor(hit, job) } : {}),
     };
   }
 
-  /* 2. Taxonomy — a different title in the same occupation family. */
+  /*
+   * 2. Taxonomy — differently worded, synonymous or translated titles from the
+   * same occupation family. This is curated and checkable, which is why it may
+   * speak to fit. The model's own retrieval expansions deliberately do not
+   * appear here: widening the search is not the same as the user asking for it.
+   */
   for (const value of preference.values) {
     for (const related of relatedTerms(value)) {
       const weight = presence(related, window);
@@ -1159,6 +1534,7 @@ function topicalOutcome(
         return {
           state: "partial",
           method: "taxonomy",
+          strength: weight,
           detail: `Different wording, related work: this listing is about "${related}".`,
           ...(evidenceFor(related, job) ? { evidence: evidenceFor(related, job) } : {}),
         };
@@ -1167,6 +1543,7 @@ function topicalOutcome(
         return {
           state: "partial",
           method: "taxonomy",
+          strength: 0.5,
           detail: `Related to "${value}" — the description mentions "${related}".`,
           ...(evidenceFor(related, job) ? { evidence: evidenceFor(related, job) } : {}),
         };
@@ -1174,22 +1551,27 @@ function topicalOutcome(
     }
   }
 
-  /* 3. Semantic — concepts the model expanded the request into. */
-  for (const concept of plan.semanticTerms) {
-    const weight = presence(concept, window);
-    if (weight >= 0.8) {
-      return {
-        state: "partial",
-        method: "semantic",
-        detail: `Read as relevant through a related concept ("${concept}").`,
-        ...(evidenceFor(concept, job) ? { evidence: evidenceFor(concept, job) } : {}),
-      };
-    }
+  /*
+   * An interest the listing never mentions is not a contradiction.
+   *
+   * Skills are read as interests, never as qualifications, and plenty of good
+   * adverts simply do not list a tool — so silence stays unknown instead of
+   * counting against the listing. A role or field that is absent is different:
+   * it means the advert is about other work.
+   */
+  if (preference.area === "skills") {
+    return {
+      state: "unknown",
+      method: "lexical",
+      strength: 0,
+      detail: `The listing does not mention ${preference.values.slice(0, 3).join(", ")}.`,
+    };
   }
 
   return {
     state: "mismatch",
     method: "lexical",
+    strength: 0,
     detail: `Nothing in this listing points at ${preference.values.slice(0, 3).join(", ")}.`,
   };
 }
@@ -1293,7 +1675,11 @@ function workModeOutcome(
       ...(detected.evidence ? { evidence: detected.evidence } : {}),
     };
   }
-  if (COMPATIBLE_MODES.has(`${requested}|${detected.mode}`)) {
+  /*
+   * Adjacency is a courtesy for a stated preference. It never overrides "only":
+   * hybrid is not remote, and the user said remote was mandatory.
+   */
+  if (preference.importance !== "hard" && COMPATIBLE_MODES.has(`${requested}|${detected.mode}`)) {
     return {
       state: "partial",
       method: "deterministic",
@@ -1491,6 +1877,13 @@ function companyOutcome(preference: RequestedPreference, job: NormalizedJob): Fa
   };
 }
 
+/**
+ * An exclusion is only ever confirmed safe by evidence, never by silence.
+ *
+ * "The excluded phrase never appeared" is not proof that the excluded condition
+ * does not apply, so an exclusion with no evidence stays `unknown`, and only a
+ * listing that states the opposite is a confirmed match.
+ */
 function exclusionOutcome(
   preference: RequestedPreference,
   job: NormalizedJob,
@@ -1498,37 +1891,87 @@ function exclusionOutcome(
 ): FacetOutcome {
   const value = preference.values[0];
   const kind = preference.kind ?? "phrase";
-  let found = false;
+  const label = (preference.label ?? "").replace(/^Not\s+/i, "").toLowerCase();
+  const method: MatchMethod = kind === "phrase" ? "lexical" : "deterministic";
+  const contradicts = (detail: string, evidence?: string): FacetOutcome => ({
+    state: preference.importance === "hard" ? "hardContradiction" : "mismatch",
+    method,
+    strength: kind === "phrase" ? 0.5 : 0.8,
+    detail,
+    ...(evidence ? { evidence } : {}),
+  });
+  const confirmedAbsent = (detail: string, evidence?: string): FacetOutcome => ({
+    state: "match",
+    method,
+    strength: 0.8,
+    detail,
+    ...(evidence ? { evidence } : {}),
+  });
+  const unknown = (detail: string): FacetOutcome => ({ state: "unknown", method, detail });
+
   switch (kind) {
-    case "contract":
-      found = job.jobTypes.includes(value as JobType);
-      break;
-    case "location":
-      found =
+    case "contract": {
+      if (!job.jobTypes.length) {
+        return unknown(
+          `The listing does not state a contract type, so we cannot confirm it is not ${label}.`,
+        );
+      }
+      if (job.jobTypes.includes(value as JobType)) {
+        return contradicts(
+          `The listing is ${job.jobTypes.join("/").replace(/-/g, " ")}, which you excluded.`,
+          job.rawJobTypes.join(", "),
+        );
+      }
+      return confirmedAbsent(
+        `The listing states ${job.jobTypes.join("/").replace(/-/g, " ")}, so it is not ${label}.`,
+        job.rawJobTypes.join(", "),
+      );
+    }
+    case "workMode": {
+      const detected = detectJobWorkMode(job, window);
+      if (detected.mode === "unknown") {
+        return unknown(
+          `The listing does not say whether the role is remote, hybrid or on-site, so we cannot confirm it is not ${label}.`,
+        );
+      }
+      if (detected.mode === value) {
+        return contradicts(
+          `The listing is ${WORK_MODE_LABELS[detected.mode]}, which you excluded.`,
+          detected.evidence,
+        );
+      }
+      return confirmedAbsent(
+        `The listing is ${WORK_MODE_LABELS[detected.mode]}, not ${label}.`,
+        detected.evidence,
+      );
+    }
+    case "location": {
+      const present =
         (job.city ? placesOverlap(value, job.city) : false) ||
         (job.country ? normalizeText(value) === normalizeText(job.country) : false) ||
         hasTerm(window.body, normalizeText(value));
-      break;
-    case "workMode":
-      found = detectJobWorkMode(job, window).mode === value;
-      break;
-    default:
-      found = hasTerm(window.full, normalizeText(value));
-      break;
+      if (present) {
+        return contradicts(
+          `The listing is in ${job.location || value}, which you excluded.`,
+          job.location,
+        );
+      }
+      const actual = job.city ?? job.country;
+      if (actual) return confirmedAbsent(`The listing is in ${actual}, not ${label}.`, job.location);
+      return unknown(`The listing names no location, so we cannot confirm it is not in ${label}.`);
+    }
+    default: {
+      if (hasTerm(window.full, normalizeText(value))) {
+        return contradicts(
+          `The listing mentions "${value}", which you excluded.`,
+          evidenceFor(value, job),
+        );
+      }
+      return unknown(
+        `The listing never mentions "${value}" — but not mentioning it is not the same as ruling it out.`,
+      );
+    }
   }
-  if (found) {
-    return {
-      state: preference.importance === "hard" ? "hardContradiction" : "mismatch",
-      method: kind === "phrase" ? "lexical" : "deterministic",
-      detail: `You asked to exclude this and the listing contains it.`,
-      ...(evidenceFor(value, job) ? { evidence: evidenceFor(value, job) } : {}),
-    };
-  }
-  return {
-    state: "match",
-    method: "deterministic",
-    detail: "Nothing you excluded appears in this listing.",
-  };
 }
 
 function evaluate(
@@ -1589,6 +2032,39 @@ const RELEVANCE_AREAS = new Set<PreferenceArea>([
   "workMode",
 ]);
 
+/**
+ * The areas that decide whether a listing is about the right *work*.
+ *
+ * Location, contract type and work mode describe a role; they can never make a
+ * sales job into the data-science role someone asked for, which is why they do
+ * not count towards relevance.
+ */
+const TOPICAL_AREAS = new Set<PreferenceArea>(["role", "domain", "responsibilities", "skills"]);
+
+const RELEVANCE_RANK: Record<TopicalRelevance, number> = {
+  none: 0,
+  weak: 1,
+  related: 2,
+  strong: 3,
+};
+
+/**
+ * Grade the evidence behind one topical conclusion.
+ *
+ *   strong   the title names the work
+ *   related  the tags or a curated family/synonym term say so
+ *   weak     only the description brushes past it
+ *   none     nothing points at it
+ */
+function topicalGrade(outcome: FacetOutcome): TopicalRelevance {
+  const strength = outcome.strength ?? 0;
+  if (outcome.state === "match") return strength >= 0.8 ? "strong" : "related";
+  if (outcome.state === "partial") {
+    return outcome.method === "taxonomy" && strength >= 0.8 ? "related" : "weak";
+  }
+  return "none";
+}
+
 function bandFor(score: number): Band {
   return score >= 80 ? "strong" : score >= 68 ? "good" : score >= 52 ? "fair" : "weak";
 }
@@ -1625,8 +2101,10 @@ function facetReason(preference: RequestedPreference, outcome: FacetOutcome): Jo
 export function scorePreferenceJob(
   job: NormalizedJob,
   plan: PreferencePlan,
-  now: number,
+  _now: number,
 ): ScoredJob {
+  // Kept in the signature so callers and future dated preferences stay stable.
+  void _now;
   const window = jobWindow(job);
   const facets: PreferenceFacet[] = [];
   const positives: JobMatchReason[] = [];
@@ -1640,6 +2118,7 @@ export function scorePreferenceJob(
   let total = 0;
   let semanticUsed = false;
   let relevance = 0;
+  let topicalRelevance: TopicalRelevance = "none";
 
   const boost = MODE_BOOST[plan.mode];
 
@@ -1656,7 +2135,13 @@ export function scorePreferenceJob(
       method: outcome.method,
       ...(outcome.evidence ? { evidence: outcome.evidence } : {}),
     });
-    if (outcome.method === "semantic") semanticUsed = true;
+    // Curated family/synonym matching is the semantic layer now; the model's own
+    // expansions only ever widen retrieval (see `retrievalExpansions`).
+    if (outcome.method === "taxonomy") semanticUsed = true;
+    if (TOPICAL_AREAS.has(preference.area)) {
+      const grade = topicalGrade(outcome);
+      if (RELEVANCE_RANK[grade] > RELEVANCE_RANK[topicalRelevance]) topicalRelevance = grade;
+    }
 
     switch (outcome.state) {
       case "match":
@@ -1691,15 +2176,20 @@ export function scorePreferenceJob(
 
   const hasPreferences = plan.preferences.length > 0;
   const coverageFraction = total > 0 ? evaluable / total : 0;
-  const rawFit = evaluable > 0 ? (earned / evaluable) * 100 : 0;
 
+  /*
+   * Preference Fit is the quality of alignment among the criteria that could
+   * genuinely be evaluated. It is never multiplied by coverage: a listing that
+   * answers half the request perfectly has a high fit *and* a low coverage, and
+   * both numbers are shown as they are. Coverage only affects ordering.
+   */
   let score: number;
   if (!hasPreferences) {
     score = NO_PREFERENCE_SCORE;
   } else if (evaluable === 0) {
     score = NEUTRAL_FIT;
   } else {
-    score = Math.round(rawFit * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * coverageFraction));
+    score = Math.round((earned / evaluable) * 100);
   }
   // A listing that contradicts something the user made mandatory is never a
   // candidate, however well it scores elsewhere.
@@ -1720,8 +2210,6 @@ export function scorePreferenceJob(
     );
     parts.push(`information coverage ${coverageLabel(coverageFraction).toLowerCase()} (${Math.round(coverageFraction * 100)}%)`);
     if (unknown) parts.push(`${unknown} could not be checked from this listing`);
-    if (unknown) parts.push("the fit is eased toward neutral rather than treated as a mismatch");
-    parts.push("freshness is not part of this score");
     neutrals.push({
       label: "How this score is put together",
       detail: `${parts.join(" · ")}.`,
@@ -1746,18 +2234,29 @@ export function scorePreferenceJob(
     facets,
     hardContradictions: [...new Set(hardContradictions)],
     semanticUsed,
+    topicalRelevance,
     evaluated: facets.filter((facet) => facet.state !== "unknown" && facet.state !== "notApplicable").length,
     requestedPreferences: plan.preferences.length,
     searchMode: plan.mode,
   };
 }
 
-/** Whether a listing is close enough to the request to be worth showing at all. */
+/**
+ * Whether a listing is close enough to the request to be shown at all.
+ *
+ * This is a gate, not a ranking: a listing that only happens to be in the right
+ * city is not a match for a role, and results are never padded with them to
+ * reach a quota. Broad requests explore everything and say so, because there is
+ * no specific intent to be relevant to yet.
+ */
 export function isRelevantToPlan(scored: ScoredJob, plan: PreferencePlan): boolean {
   if (!plan.preferences.length) return true;
-  // A broad request has no intent to be relevant to, so nothing is dropped.
   if (plan.mode === "broad") return true;
-  return scored.relevance > 0;
+  const grade = scored.topicalRelevance ?? "none";
+  if (plan.mode === "explicit-role") return grade === "strong" || grade === "related";
+  // Domain exploration keeps a wider spread of occupations, but still asks for
+  // genuine domain evidence rather than a passing keyword.
+  return grade === "strong" || grade === "related";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1775,8 +2274,12 @@ export function freshnessRank(scored: ScoredJob): number {
 
 export function compareScored(a: ScoredJob, b: ScoredJob): number {
   if (b.score !== a.score) return b.score - a.score;
+  // Coverage is an internal ranking consideration only, and a cautious one: it
+  // never changes the fit that is shown.
   if ((b.coverage ?? 0) !== (a.coverage ?? 0)) return (b.coverage ?? 0) - (a.coverage ?? 0);
-  const freshness = freshnessRank(a) - freshnessRank(b);
+  // A dated listing is known to be current; an undated one is merely unknown, so
+  // it must not jump ahead of it. Within each group the newer posting leads.
+  const freshness = freshnessRank(b) - freshnessRank(a);
   if (freshness !== 0) return freshness;
   if ((b.postedAt ?? 0) !== (a.postedAt ?? 0)) return (b.postedAt ?? 0) - (a.postedAt ?? 0);
   return a.title.localeCompare(b.title);
