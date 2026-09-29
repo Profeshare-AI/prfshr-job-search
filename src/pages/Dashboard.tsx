@@ -6,7 +6,8 @@ import { api } from "@/convex/_generated/api";
 import { useAuth } from "@/hooks/use-auth";
 import type { SearchResult } from "@/convex/jobs/types";
 import { readActionError } from "@/lib/errors";
-import { cacheListings, readCachedListings } from "@/lib/jobCache";
+import { cacheListings } from "@/lib/jobCache";
+import { readRetainPrompt, writeRetainPrompt } from "@/lib/privacy";
 import { cn } from "@/lib/utils";
 import { useAction } from "convex/react";
 import {
@@ -29,12 +30,10 @@ const BAND_LEGEND = [
 ];
 
 const PIPELINE = [
-  "Your sentence is read into preferences — role, field, location, work mode, contract, language — each weighted by how strongly you said it.",
-  "That reading becomes several short queries for the job boards.",
-  "Live listings are fetched, normalized and de-duplicated; known closed or expired ones are dropped.",
-  "Every preference is checked against every listing and gets a state: match, partial, mismatch, hard contradiction, not stated, or not applicable.",
-  "Preference Fit is scored from 0 to 100 with information coverage beside it, and the evidence behind each conclusion travels with the result.",
-  "Apply opens the original posting so you can finish the application there.",
+  "Your sentence is read into the things you asked for — work, place, work mode, contract, language — and marked as required, preferred or merely mentioned.",
+  "Live job boards are searched for openings that could match, and closed or duplicate listings are left out.",
+  "Every listing is checked against what you asked for, and each item comes back as confirmed, partly matching, conflicting, or not stated by the posting.",
+  "Preference Fit and information coverage are shown side by side, with the posting's own words behind each conclusion. Apply opens the original listing.",
 ];
 
 export default function Dashboard() {
@@ -46,13 +45,9 @@ export default function Dashboard() {
   const [result, setResult] = useState<SearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [cachedCount, setCachedCount] = useState(0);
+  const [retainPrompt, setRetainPrompt] = useState(readRetainPrompt);
   const resultsRef = useRef<HTMLDivElement>(null);
   const autoRan = useRef(false);
-
-  useEffect(() => {
-    setCachedCount(readCachedListings().length);
-  }, [result]);
 
   const runSearch = useCallback(
     async (nextQuery: string) => {
@@ -62,7 +57,7 @@ export default function Dashboard() {
       setIsSearching(true);
       setError(null);
       try {
-        const response = await searchJobs({ query: trimmed });
+        const response = await searchJobs({ query: trimmed, retainPrompt });
         setResult(response);
         cacheListings(response.results);
         window.requestAnimationFrame(() => {
@@ -75,7 +70,7 @@ export default function Dashboard() {
         setIsSearching(false);
       }
     },
-    [isSearching, searchJobs],
+    [isSearching, searchJobs, retainPrompt],
   );
 
   // Hand-off from the catalog, the detail page and the landing examples.
@@ -85,7 +80,10 @@ export default function Dashboard() {
     if (!incoming || incoming.trim().length < 3) return;
     autoRan.current = true;
     setSearchParams({}, { replace: true });
-    void runSearch(incoming);
+    // Deferred by a tick so the incoming prompt is not run as a side effect of
+    // this render pass.
+    const timer = window.setTimeout(() => void runSearch(incoming), 0);
+    return () => window.clearTimeout(timer);
   }, [runSearch, searchParams, setSearchParams]);
 
   const displayName = useMemo(() => {
@@ -113,27 +111,32 @@ export default function Dashboard() {
             </p>
           </div>
 
-          {/* Their own session, honestly scoped ------------------------------ */}
-          <section className="nb-border bg-nb-surface">
-            <div className="nb-border-b bg-nb-deep px-4 py-2">
-              <h2 className="font-mono text-[10px] tracking-[0.2em] text-nb-line/60 uppercase">
-                This session
-              </h2>
-            </div>
-            <dl className="divide-y-2 divide-nb-line/10">
-              <SessionRow label="Signed in as" value={user?.email ?? user?.name ?? "Guest"} />
-              <SessionRow label="Listings held in this tab" value={String(cachedCount)} />
-              <SessionRow label="Stored about you" value="Nothing" />
-              <SessionRow label="Public listings cached" value="Yes, not yours" />
-            </dl>
-            <div className="border-t-2 border-dashed border-nb-line/20 px-4 py-3">
-              <p className="text-xs leading-5 text-nb-line/60">
-                Version 1 keeps no account database — nothing about you is stored, which
-                is also why saved searches and email alerts are not part of it yet. Board
-                listings are cached so a search does not re-ask the same board for the
-                same page twice; that cache holds public postings only.
-              </p>
-            </div>
+          {/* Privacy, stated plainly and honestly ---------------------------- */}
+          <section className="nb-border bg-nb-surface p-4">
+            <h2 className="font-mono text-[10px] tracking-[0.2em] text-nb-line/60 uppercase">
+              Your searches
+            </h2>
+            <p className="mt-2 text-xs leading-5 text-nb-line/60">
+              What you type is kept with its results so the matching can be studied and
+              improved, and it is deleted automatically. It is never shown to other
+              users. Do not paste anything sensitive into the box. Full detail in the{" "}
+              <Link to="/privacy" className="font-semibold underline decoration-2 underline-offset-2">
+                privacy notice
+              </Link>
+              .
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !retainPrompt;
+                setRetainPrompt(next);
+                writeRetainPrompt(next);
+              }}
+              className="nb-border mt-3 inline-flex items-center gap-2 bg-nb-deep px-2.5 py-1 font-mono text-[10px] tracking-[0.12em] text-nb-line/75 uppercase transition-colors hover:text-nb-amber"
+            >
+              <span className={cn("nb-border size-2.5", retainPrompt ? "bg-nb-green" : "bg-nb-line/40")} />
+              {retainPrompt ? "Keeping prompts for research" : "Aggregate telemetry only"}
+            </button>
           </section>
         </header>
 
@@ -187,7 +190,13 @@ export default function Dashboard() {
             ) : (
               <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
                 {result.results.map((job, index) => (
-                  <JobCard key={job.id} job={job} rank={index + 1} origin="search" />
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    rank={index + 1}
+                    origin="search"
+                    {...(result.analyticsId ? { analyticsId: result.analyticsId } : {})}
+                  />
                 ))}
               </div>
             )}
@@ -197,17 +206,6 @@ export default function Dashboard() {
         {!result && !isSearching && !error && <IdleState />}
       </div>
     </AppShell>
-  );
-}
-
-function SessionRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-3 px-4 py-2.5">
-      <dt className="font-mono text-[10px] tracking-[0.14em] text-nb-line/55 uppercase">
-        {label}
-      </dt>
-      <dd className="max-w-[12rem] truncate font-mono text-[11px] text-nb-line/75">{value}</dd>
-    </div>
   );
 }
 

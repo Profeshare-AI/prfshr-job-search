@@ -1,3 +1,4 @@
+import { api } from "@/convex/_generated/api";
 import type { CatalogJob, JobMatch } from "@/convex/jobs/types";
 import { isScored, type AnyListing } from "@/lib/jobCache";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,7 @@ import {
   MapPin,
   Wifi,
 } from "lucide-react";
+import { useMutation } from "convex/react";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -68,16 +70,38 @@ export function JobCard({
   job,
   rank,
   origin = "catalog",
+  analyticsId,
 }: {
   job: AnyListing;
   rank?: number;
   /** Which section the reader came from, so the detail page can point back. */
   origin?: "search" | "catalog";
+  /**
+   * Opaque id of the search this card came from. Present so opening or applying
+   * can be counted as part of understanding which results were useful — and
+   * absent whenever there is nothing to attach it to.
+   */
+  analyticsId?: string;
 }) {
   const [showSnippet, setShowSnippet] = useState(false);
+  const recordInteraction = useMutation(api.analytics.recordInteraction);
   const scored = isScored(job);
   const detailHref = `/jobs/${encodeURIComponent(job.id)}`;
   const typeLabels = job.jobTypes.map((type) => TYPE_LABELS[type] ?? type);
+
+  /**
+   * Report one interaction. Deliberately fire-and-forget: a failed analytics
+   * write must never interrupt someone opening a job or applying for it.
+   */
+  const note = (kind: "result-open" | "apply-click") => {
+    if (!analyticsId) return;
+    void recordInteraction({
+      eventId: analyticsId,
+      kind,
+      listingId: job.id,
+      ...(typeof rank === "number" ? { rank } : {}),
+    }).catch(() => undefined);
+  };
 
   return (
     <article className="nb-border nb-lift flex flex-col bg-nb-surface">
@@ -127,6 +151,7 @@ export function JobCard({
         <h3 className="text-[15px] leading-snug sm:text-base">
           <Link
             to={detailHref}
+            onClick={() => note("result-open")}
             state={{ job, origin }}
             className="font-display text-nb-line underline-offset-4 hover:text-nb-amber hover:underline"
           >
@@ -294,6 +319,7 @@ export function JobCard({
         </Link>
         <a
           href={job.url}
+          onClick={() => note("apply-click")}
           target="_blank"
           rel="noopener noreferrer"
           className="nb-border nb-press inline-flex items-center gap-2 bg-nb-amber px-3.5 py-2 font-display text-[11px] tracking-[0.14em] text-nb-deep uppercase hover:bg-nb-line"

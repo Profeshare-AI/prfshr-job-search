@@ -225,12 +225,22 @@ describe("work mode distinctions", () => {
     ).toBe("unknown");
   });
 
-  test("a hybrid listing is a partial match for someone who wanted remote", () => {
+  test("a hybrid listing contradicts someone who required remote-only work", () => {
     const { scored } = analyze("remote only data scientist", {
       remote: false,
       descriptionText: "Hybrid data scientist role, two days from home.",
     });
-    // Hybrid is adjacent, not a contradiction, even though the preference is hard.
+    // "Only" is a hard requirement, and adjacency never overrides one.
+    expect(facet(scored, "workMode")?.state).toBe("hardContradiction");
+    expect(scored.hardContradictions?.length).toBe(1);
+  });
+
+  test("a hybrid listing is a partial match when remote was merely preferred", () => {
+    const { plan, scored } = analyze("data scientist, ideally remote", {
+      remote: false,
+      descriptionText: "Hybrid data scientist role, two days from home.",
+    });
+    expect(plan.preferences.find((entry) => entry.area === "workMode")?.importance).toBe("strong");
     expect(facet(scored, "workMode")?.state).toBe("partial");
     expect(scored.hardContradictions).toEqual([]);
   });

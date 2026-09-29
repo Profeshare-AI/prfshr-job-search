@@ -67,6 +67,15 @@ export type SearchMode = (typeof SEARCH_MODES)[number];
 export const MATCH_METHODS = ["deterministic", "lexical", "taxonomy", "semantic"] as const;
 export type MatchMethod = (typeof MATCH_METHODS)[number];
 
+/**
+ * How much evidence there is that a listing is about the work that was asked
+ * for. `related` means the tags or a curated family/synonym term say so, `weak`
+ * means only the description brushes past it, and the relevance gate drops
+ * `weak`/`none` rather than padding the result list with them.
+ */
+export const TOPICAL_RELEVANCE = ["strong", "related", "weak", "none"] as const;
+export type TopicalRelevance = (typeof TOPICAL_RELEVANCE)[number];
+
 /** Upper bound on how many ranked listings one search (or catalog page) returns. */
 export const MAX_RESULTS = 100;
 
@@ -155,8 +164,20 @@ export const jobIntentValidator = v.object({
   englishFriendly: v.boolean(),
   startAfter: v.optional(v.string()),
   understoodBy: v.string(),
-  /** Concept expansion contributed by the model — the "semantic" half of matching. */
+  /**
+   * Retrieval expansions: related titles the model suggested in order to search
+   * wider. Internal to retrieval — they are never scored, never presented as
+   * something the user asked for, and never hard.
+   */
   semanticTerms: v.optional(v.array(v.string())),
+  /** Interpretation provenance: the model agreed with the rules on these terms. */
+  modelConfirmed: v.optional(v.array(v.string())),
+  /** Interpretation provenance: terms the model said the parser got wrong. */
+  modelRemoved: v.optional(v.array(v.string())),
+  /** Interpretation provenance: readings the model was not sure about. */
+  uncertainTerms: v.optional(v.array(v.string())),
+  /** Interpretation provenance: things the model reclassified as exclusions. */
+  modelExclusions: v.optional(v.array(v.string())),
   /** Preference Fit v2: the reading strategy and the preferences it found. */
   searchMode: v.optional(v.string()),
   preferences: v.optional(v.array(interpretedPreferenceValidator)),
@@ -206,7 +227,7 @@ export const jobMatchValidator = v.object({
   facets: v.optional(v.array(preferenceFacetValidator)),
   /** Requirements the listing explicitly contradicts — these are dropped, not ranked. */
   hardContradictions: v.optional(v.array(v.string())),
-  /** True when related-title / concept matching changed the outcome. */
+  /** True when family/synonym (taxonomy) matching changed the outcome. */
   semanticUsed: v.optional(v.boolean()),
   evaluated: v.optional(v.number()),
   requestedPreferences: v.optional(v.number()),
@@ -248,6 +269,12 @@ export const searchResultValidator = v.object({
   generatedAt: v.number(),
   stats: searchStatsValidator,
   results: v.array(jobMatchValidator),
+  /**
+   * Opaque id of the analytics record for this search, so the workspace can
+   * report which result was opened or applied to. It carries no readable data
+   * and no prompt text.
+   */
+  analyticsId: v.optional(v.string()),
 });
 
 export const catalogResultValidator = v.object({
@@ -322,6 +349,7 @@ export interface ScoredJob extends NormalizedJob {
   facets?: PreferenceFacet[];
   hardContradictions?: string[];
   semanticUsed?: boolean;
+  topicalRelevance?: TopicalRelevance;
   evaluated?: number;
   requestedPreferences?: number;
   searchMode?: SearchMode;

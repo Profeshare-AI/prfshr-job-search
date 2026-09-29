@@ -11,8 +11,6 @@ import {
   CircleHelp,
   Clock,
   ExternalLink,
-  Filter,
-  Layers,
   Library,
   Link2,
   ScanSearch,
@@ -32,10 +30,10 @@ const fadeUp = {
 };
 
 const STATS = [
-  { value: "100", label: "results max", hint: "best first, never a dump" },
-  { value: "07", label: "live job boards", hint: "fetched live, never a mirror" },
-  { value: "00", label: "résumé uploads", hint: "this is preference fit only" },
-  { value: "06", label: "match states", hint: "match, partial, unknown, more" },
+  { value: "One", label: "sentence", hint: "no filters to click through" },
+  { value: "Live", label: "listings", hint: "with a direct link to apply" },
+  { value: "Two", label: "numbers", hint: "fit, and how much could be checked" },
+  { value: "Zero", label: "guesses", hint: "missing information stays unknown" },
 ];
 
 const ENTRY_POINTS = [
@@ -65,33 +63,23 @@ const ENTRY_POINTS = [
 const PIPELINE = [
   {
     icon: Sparkles,
-    title: "Read the request",
-    body: "Your sentence is read into preferences — role, field, location, work mode, contract, pay, language — each marked as a requirement, a preference or a passing mention. No filters to click through first.",
-  },
-  {
-    icon: Filter,
-    title: "Build the queries",
-    body: "“Data and AI internships in Paris, English-friendly, January start” becomes a set of short job-board queries, and we show you every one we ran.",
+    title: "Describe the role",
+    body: "One sentence is the whole search: the work you want, where, and on what terms. ClearRoute reads it and shows you how it read it, so you can correct it in the same box.",
   },
   {
     icon: ScanSearch,
-    title: "Fetch the live boards",
-    body: "Seven boards are queried at once — and asked about the country you named — then normalized into one shared shape.",
-  },
-  {
-    icon: Layers,
-    title: "De-duplicate",
-    body: "The same opening posted twice collapses into a single card, so one employer cannot flood your shortlist.",
+    title: "Search live listings",
+    body: "We look across live job boards for openings that could match — and leave out the ones you already ruled out.",
   },
   {
     icon: ShieldAlert,
-    title: "Judge each preference",
-    body: "Every preference gets a state: match, partial, mismatch, a hard contradiction, or unknown when the listing simply does not say. Missing information is never counted as a match.",
+    title: "Check what you asked for",
+    body: "Each thing you asked for is checked against the posting: it matches, it partly matches, it conflicts, or the posting never said. Missing information is never counted as a match.",
   },
   {
     icon: Link2,
     title: "Rank, explain, apply",
-    body: "Preference Fit is the headline number and information coverage sits beside it. Freshness is shown separately and only breaks ties. Every card carries the listing text behind its result.",
+    body: "The strongest matches come first, each with the reasons, the conflicts and what the posting left out — plus a direct link to the original listing.",
   },
 ];
 
@@ -134,14 +122,12 @@ const SIGNALS = [
   },
 ];
 
-const SCORING = [
-  { factor: "Requirements you made explicit", points: "weight 3" },
-  { factor: "Preferences you stated", points: "weight 2" },
-  { factor: "Ordinary mentions", points: "weight 1" },
-  { factor: "Location · work mode · contract · dates · language", points: "rules" },
-  { factor: "Related titles, families and translations", points: "taxonomy" },
-  { factor: "Missing information", points: "no penalty" },
-  { factor: "Freshness", points: "separate" },
+/** What every result tells you, in plain language. No weights, no formulas. */
+const EXPLAINED = [
+  "Why this job is relevant to your request",
+  "Which of the things you asked for the listing confirms",
+  "What conflicts with your request",
+  "What the posting never said, so we could not check it",
 ];
 
 export default function Landing() {
@@ -241,7 +227,7 @@ export default function Landing() {
             </div>
 
             <p className="mt-4 font-mono text-[10px] tracking-[0.1em] text-nb-line/55 uppercase">
-              Free to use · no résumé upload · sign in with email or as a guest
+              Free to use · one sentence to search · sign in with email or as a guest
             </p>
 
             <div className="mt-8 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -317,11 +303,11 @@ export default function Landing() {
               The pipeline
             </p>
             <h2 className="mt-3 font-display text-3xl leading-[1.03] text-nb-line uppercase sm:text-4xl">
-              Ten steps. Six of them visible.
+              Say it once. See why each job fits.
             </h2>
             <p className="mt-3 text-sm leading-6 text-nb-line/55">
-              Every result carries the trail behind it: what we understood, which
-              queries we ran, what conflicted, and what we could not confirm.
+              No filters to build, no keywords to guess. You describe the job; every
+              result comes back with its reasons attached.
             </p>
           </motion.div>
 
@@ -437,26 +423,24 @@ export default function Landing() {
           >
             <div>
               <h3 className="font-display text-lg text-nb-line uppercase">
-                Why every score is explainable
+                Every result explains itself
               </h3>
               <p className="mt-3 text-sm leading-6 text-nb-line/55">
-                Preference Fit is not a black box and it is not an embedding number.
-                Each preference you stated is checked on its own, weighted by how
-                strongly you stated it, and every conclusion carries the listing text
-                behind it. Information coverage is reported separately, so a strong fit
-                on thin evidence reads as exactly that.
+                Preference Fit says how well a listing answers what you actually
+                asked for. Information coverage says how much of your request the
+                posting let us check. Both numbers are shown as they are, and each
+                conclusion quotes the listing text behind it — so a strong fit on
+                thin evidence reads as exactly that.
               </p>
             </div>
             <ul>
-              {SCORING.map((row) => (
+              {EXPLAINED.map((line) => (
                 <li
-                  key={row.factor}
-                  className="flex items-center justify-between gap-3 border-b-2 border-dashed border-nb-line/15 py-2 last:border-b-0"
+                  key={line}
+                  className="flex items-start gap-3 border-b-2 border-dashed border-nb-line/15 py-2.5 last:border-b-0"
                 >
-                  <span className="text-sm font-medium text-nb-line/80">{row.factor}</span>
-                  <span className="nb-border bg-nb-amber px-2 py-0.5 font-mono text-xs font-semibold text-nb-deep">
-                    {row.points}
-                  </span>
+                  <span className="nb-border mt-0.5 size-3 shrink-0 bg-nb-amber" />
+                  <span className="text-sm leading-5 font-medium text-nb-line/80">{line}</span>
                 </li>
               ))}
             </ul>
@@ -479,15 +463,15 @@ export default function Landing() {
                 Seven boards, one ranked answer — scored preference by preference.
               </h2>
               <p className="mt-4 text-sm leading-6 text-nb-line/55">
-                This version does four things and nothing else: browse and filter a
-                live catalog, search it with a natural-language prompt, open a single
-                listing for its full Preference Fit breakdown, and send you to the
-                original posting to apply. Every board it asked is listed with the
-                search, so you can see what came back and what did not. No saved
-                searches, no email digests, no résumé upload.
+                ClearRoute does four things: browse a live catalog, search it with a
+                natural-language prompt, open a single listing for its full breakdown,
+                and send you to the original posting to apply. It ranks and explains
+                opportunities — it never applies on your behalf and never decides
+                whether you are qualified. Searching is free, and there is nothing to
+                upload.
               </p>
               <div className="mt-5 flex flex-wrap gap-2">
-                {["Max 100 results", "Stateless", "Live listings"].map((tag) => (
+                {["Natural-language search", "Explained results", "Live listings"].map((tag) => (
                   <span
                     key={tag}
                     className="nb-border bg-nb-deep px-2.5 py-1 font-mono text-[10px] tracking-[0.12em] text-nb-line/70 uppercase"
@@ -504,11 +488,11 @@ export default function Landing() {
                   In scope
                 </h3>
                 <ul className="mt-2 space-y-1.5 text-xs leading-5 text-nb-line/60">
-                  <li>· Read a free-text request into weighted preferences and show how it was read.</li>
-                  <li>· Turn it into queries, then fetch, normalize and de-duplicate.</li>
-                  <li>· Check every listing against every preference, with six possible states.</li>
-                  <li>· Score Preference Fit and report information coverage beside it.</li>
-                  <li>· Carry the listing evidence behind each conclusion.</li>
+                  <li>· Read your request and show you how it was read.</li>
+                  <li>· Search live job boards for openings that could match.</li>
+                  <li>· Check each listing against what you asked for.</li>
+                  <li>· Report Preference Fit, and how much could be checked, separately.</li>
+                  <li>· Quote the listing text behind each conclusion.</li>
                   <li>· Browse the same live catalog without a prompt.</li>
                 </ul>
               </div>
@@ -518,10 +502,10 @@ export default function Landing() {
                   Deliberately out
                 </h3>
                 <ul className="mt-2 space-y-1.5 text-xs leading-5 text-nb-line/55">
-                  <li>· Profile Fit — matching your experience and qualifications. Deferred.</li>
-                  <li>· Résumé upload, parsing or CV scoring of any kind.</li>
+                  <li>· Applying to jobs for you, or contacting employers.</li>
+                  <li>· Assessing whether you are qualified — that is your call, not ours.</li>
                   <li>· Saved searches, alerts and email digests.</li>
-                  <li>· Storing your history, profile or documents on a server.</li>
+                  <li>· Anything to upload: ClearRoute never asks for a CV.</li>
                 </ul>
               </div>
             </div>
@@ -556,9 +540,25 @@ export default function Landing() {
       {/* Footer ------------------------------------------------------------- */}
       <footer className="nb-border-t bg-nb-deep">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-6">
-          <BrandMark to="/" />
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-4">
+            <BrandMark to="/" />
+            <nav aria-label="Company" className="flex flex-wrap items-center gap-4">
+              {[
+                { to: "/about", label: "About" },
+                { to: "/privacy", label: "Privacy" },
+              ].map((item) => (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className="font-mono text-[10px] tracking-[0.16em] text-nb-line/55 uppercase underline-offset-4 transition-colors hover:text-nb-amber hover:underline"
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
           <p className="max-w-xl text-xs leading-5 text-nb-line/55">
-            Live listings from{" "}
+            ClearRoute by Profeshare AI · live listings from{" "}
             {SOURCE_CREDITS.map((credit, index) => (
               <span key={credit.label}>
                 {index > 0 ? (index === SOURCE_CREDITS.length - 1 ? " and " : ", ") : ""}
@@ -572,8 +572,8 @@ export default function Landing() {
                 </a>
               </span>
             ))}{" "}
-            · ClearRoute ranks and explains; it never applies on your behalf and never
-            stores your search.
+            . ClearRoute ranks and explains opportunities; it never applies on your
+            behalf, and it never decides whether you are qualified.
           </p>
         </div>
       </footer>
@@ -599,7 +599,7 @@ function HeroCard() {
         </p>
         <p className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.2em] text-nb-line/55 uppercase">
           <Clock className="size-3" />
-          1.2s
+          Posted today
         </p>
       </div>
 

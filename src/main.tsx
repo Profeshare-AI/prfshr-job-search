@@ -15,7 +15,23 @@ const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const Browse = lazy(() => import("./pages/Browse.tsx"));
 const JobDetail = lazy(() => import("./pages/JobDetail.tsx"));
+const About = lazy(() => import("./pages/About.tsx"));
+const Privacy = lazy(() => import("./pages/Privacy.tsx"));
+const AdminConsole = lazy(() => import("./pages/AdminConsole.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+
+/**
+ * The administrator console's path.
+ *
+ * Configurable through protected deployment configuration (`VITE_ADMIN_ROUTE`)
+ * so a deployment can move it without a code change. It is deliberately absent
+ * from every navigation surface, sitemap and public page — but concealment is
+ * not the authorization mechanism: the route only renders a console, and every
+ * query behind it verifies both a signed-in session for the authorized account
+ * and a live administrator session on the server.
+ */
+const ADMIN_ROUTE =
+  (import.meta.env.VITE_ADMIN_ROUTE as string | undefined)?.trim() || "/console-7f3c91";
 
 // Simple loading fallback for route transitions
 function RouteLoading() {
@@ -156,6 +172,16 @@ createRoot(document.getElementById("root")!).render(
                   element={
                     <RequireAuth>
                       <JobDetail />
+                    </RequireAuth>
+                  }
+                />
+                <Route path="/about" element={<About />} />
+                <Route path="/privacy" element={<Privacy />} />
+                <Route
+                  path={ADMIN_ROUTE}
+                  element={
+                    <RequireAuth redirectImmediately>
+                      <AdminConsole />
                     </RequireAuth>
                   }
                 />

@@ -258,3 +258,14 @@ paid per volume and are a different conversation — they are a *cost* answer, n
   10 calls/second, and most other sources are freshness-limited rather than quota-limited.
 - **The cheapest real coverage win is Reed** for the UK, followed by keyless ATS additions
   (SmartRecruiters, Ashby).
+
+## Administrator test searches
+
+Administrator prompt testing (the private console's "Prompt testing" workspace) runs the same
+pipeline and therefore the same per-source budgets, cooldowns, cache leases and single-flight
+rules as a public search. It skips only the *per-user* hourly search cap, because that cap exists
+to stop one person monopolising the shared allowance rather than to protect a provider; skipping
+it is a controlled server-side policy, not a way around a third-party limit.
+
+Nothing in this file changes for administrator tests: if a source is out of allowance, an
+administrator test is refused exactly as a public search would be.

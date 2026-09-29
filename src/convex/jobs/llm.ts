@@ -43,12 +43,16 @@ Turn a candidate's plain-English job request into a structured search plan.
 
 Reply with ONE minified JSON object and nothing else. No markdown, no code fences.
 Shape:
-{"summary":string,"roleKeywords":string[],"titles":string[],"relatedTitles":string[],"skills":string[],"locations":string[],"jobTypes":string[],"seniority":string[],"startAfter":string|null,"remotePreference":"remote"|"hybrid"|"onsite"|"any","englishFriendly":boolean,"searchQueries":string[]}
+{"summary":string,"roleKeywords":string[],"titles":string[],"domains":string[],"relatedTitles":string[],"skills":string[],"locations":string[],"jobTypes":string[],"seniority":string[],"startAfter":string|null,"remotePreference":"remote"|"hybrid"|"onsite"|"any","englishFriendly":boolean,"exclusions":string[],"remove":string[],"uncertain":string[],"searchQueries":string[]}
 
 Rules:
-- roleKeywords: 3-8 short lowercase concepts for the target role/domain, e.g. "data science", "machine learning", "business intelligence".
+- roleKeywords: 3-8 short lowercase concepts for the role the user actually asked for, taken from their own words, e.g. "data science", "machine learning".
 - titles: 2-5 realistic job titles a matching posting would use, e.g. "Data Analyst Intern".
-- relatedTitles: 3-8 adjacent job titles, occupation families or concepts a *related* posting might use instead of the literal wording, e.g. for "data science": "business intelligence analyst", "analytics engineer", "marketing analytics". These are how a differently-worded but related listing is found. Never list an unrelated field.
+- domains: fields the user named that are not job titles, e.g. "sustainability", "finance". Do not add a field the user did not name.
+- exclusions: things the user explicitly rejected — "no temporary contracts", "not on-site", "exclude sales". Copy their wording. Empty array when there are none.
+- remove: terms in the deterministic draft below that the user did NOT ask for, because the parser guessed wrong. Never list wording the user typed themselves. Empty array when the draft is accurate.
+- uncertain: terms you are unsure about. Anything here is treated as a weak preference and can never become a requirement.
+- relatedTitles: 3-8 adjacent job titles, occupation families or concepts a *related* posting might use instead of the literal wording, e.g. for "data science": "business intelligence analyst", "analytics engineer", "marketing analytics". These are ONLY used to search wider, never as requirements, so never list an unrelated field.
 - searchQueries: 4-8 short queries a person would actually type into a job board, combining role + level + location.
 - locations: ONLY places the user named or unambiguously implied. Never invent a location.
 - skills: only tools/languages the user named. Never invent skills.
@@ -62,6 +66,7 @@ interface RawLlmShape {
   summary?: unknown;
   roleKeywords?: unknown;
   titles?: unknown;
+  domains?: unknown;
   relatedTitles?: unknown;
   skills?: unknown;
   locations?: unknown;
@@ -70,6 +75,9 @@ interface RawLlmShape {
   startAfter?: unknown;
   remotePreference?: unknown;
   englishFriendly?: unknown;
+  exclusions?: unknown;
+  remove?: unknown;
+  uncertain?: unknown;
   searchQueries?: unknown;
 }
 
@@ -118,9 +126,15 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * One model call. `ok: false` carries the HTTP status instead of throwing, so a
+ * rate-limit can be recorded honestly rather than looking like a missing key.
+ */
 interface LlmCallResult {
+  ok: boolean;
   text: string;
   usage: LlmUsage;
+  status: number;
 }
 
 /** Read a numeric rate-limit header, tolerating the provider omitting it. */
@@ -144,7 +158,7 @@ async function callOpenAiCompatible(
   apiKey: string,
   model: string,
   userPrompt: string,
-): Promise<LlmCallResult | null> {
+): Promise<LlmCallResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
   try {
@@ -172,7 +186,7 @@ async function callOpenAiCompatible(
     });
     if (!response.ok) {
       console.warn(`[clearroute] ${model} responded HTTP ${response.status}`);
-      return null;
+      return { ok: false, text: "", usage: {}, status: response.status };
     }
     const payload = (await response.json()) as {
       choices?: Array<{ message?: { content?: unknown } }>;
@@ -183,7 +197,9 @@ async function callOpenAiCompatible(
       };
     };
     const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content !== "string") return null;
+    if (typeof content !== "string") {
+      return { ok: false, text: "", usage: {}, status: response.status };
+    }
 
     // The body carries the token spend; the headers carry what is left of the
     // account's budget. Groq applies both per *organization*, so the numbers
@@ -192,7 +208,9 @@ async function callOpenAiCompatible(
       typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
     return {
+      ok: true,
       text: content,
+      status: response.status,
       usage: defined({
         promptTokens: count(payload.usage?.prompt_tokens),
         completionTokens: count(payload.usage?.completion_tokens),
@@ -208,7 +226,7 @@ async function callOpenAiCompatible(
       `[clearroute] ${model} call failed:`,
       error instanceof Error ? error.message : error,
     );
-    return null;
+    return { ok: false, text: "", usage: {}, status: 0 };
   } finally {
     clearTimeout(timer);
   }
@@ -253,29 +271,67 @@ interface IntentAnswer {
   text: string;
   provider: string;
   usage?: LlmUsage;
+  attempts: number;
+  latencyMs: number;
+  rateLimited: boolean;
+  /** Which path answered, when it was not the preferred one. */
+  fallbackPath?: string;
+}
+
+/**
+ * What happened while reading the request, recorded for operators.
+ *
+ * A search degrades gracefully without a model, but a quiet degradation is
+ * impossible to notice and impossible to fix, so the pipeline records which path
+ * answered, how many attempts it took and whether a provider throttled us.
+ */
+export interface LlmDiagnostics {
+  status: "ok" | "fallback" | "unavailable" | "not-configured";
+  provider?: string;
+  attempts: number;
+  latencyMs: number;
+  rateLimited: boolean;
+  fallbackPath?: string;
 }
 
 /** Ask whichever provider is configured; returns the raw JSON text. */
 async function readIntentJson(userPrompt: string): Promise<IntentAnswer | null> {
+  const startedAt = Date.now();
+  let attempts = 0;
+  let rateLimited = false;
+
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
-    for (const model of GROQ_MODELS) {
+    for (const [index, model] of GROQ_MODELS.entries()) {
+      attempts += 1;
       const answer = await callOpenAiCompatible(GROQ_URL, groqKey, model, userPrompt);
-      // The provider string is user-visible (the intent panel chip), so naming the
-      // model is also how you confirm which one answered.
-      if (answer && extractJson(answer.text)) {
+      if (answer.status === 429 || answer.status === 403) rateLimited = true;
+      if (answer.ok && extractJson(answer.text)) {
         const usage = defined(answer.usage);
         return {
           text: answer.text,
           provider: `Groq ${model}`,
+          attempts,
+          latencyMs: Date.now() - startedAt,
+          rateLimited,
+          ...(index > 0 ? { fallbackPath: `groq:${model}` } : {}),
           ...(Object.keys(usage).length ? { usage } : {}),
         };
       }
     }
   }
+
+  attempts += 1;
   const gatewayText = await callBuiltInGateway(userPrompt);
   if (gatewayText && extractJson(gatewayText)) {
-    return { text: gatewayText, provider: "AI gateway" };
+    return {
+      text: gatewayText,
+      provider: "AI gateway",
+      attempts,
+      latencyMs: Date.now() - startedAt,
+      rateLimited,
+      fallbackPath: "gateway",
+    };
   }
   return null;
 }
@@ -287,16 +343,39 @@ async function readIntentJson(userPrompt: string): Promise<IntentAnswer | null> 
 export async function extractIntentWithLLM(
   query: string,
   base: IntentDraft,
-): Promise<LlmIntent | null> {
+): Promise<{ intent: LlmIntent | null; diagnostics: LlmDiagnostics }> {
+  const startedAt = Date.now();
   const userPrompt = `Candidate request:\n"""${query.slice(0, 600)}"""\n\nA deterministic parser produced this first draft (use it as a hint, correct it where it is wrong):\n${JSON.stringify(
     base,
   )}`;
 
+  const configured = Boolean(process.env.GROQ_API_KEY || process.env.VLY_INTEGRATION_KEY);
   const answer = await readIntentJson(userPrompt);
-  if (!answer) return null;
+  if (!answer) {
+    return {
+      intent: null,
+      diagnostics: {
+        status: configured ? "unavailable" : "not-configured",
+        attempts: configured ? 1 : 0,
+        latencyMs: Date.now() - startedAt,
+        rateLimited: false,
+      },
+    };
+  }
 
   const parsed = extractJson(answer.text);
-  if (!parsed) return null;
+  if (!parsed) {
+    return {
+      intent: null,
+      diagnostics: {
+        status: "unavailable",
+        provider: answer.provider,
+        attempts: answer.attempts,
+        latencyMs: answer.latencyMs,
+        rateLimited: answer.rateLimited,
+      },
+    };
+  }
 
   const locations = stringList(parsed.locations, 6)
     .map((value) => canonicalizeLocation(value))
@@ -314,9 +393,17 @@ export async function extractIntentWithLLM(
     remoteRaw === "remote" || remoteRaw === "hybrid" || remoteRaw === "onsite" ? remoteRaw : "any";
 
   const related = stringList(parsed.relatedTitles, 8);
+  const domains = stringList(parsed.domains, 6);
+  const exclusions = stringList(parsed.exclusions, 6);
+  const remove = stringList(parsed.remove, 8);
+  const uncertain = stringList(parsed.uncertain, 8);
 
   const draft: IntentDraft = {
-    roleKeywords: [...stringList(parsed.roleKeywords, 8), ...stringList(parsed.titles, 5)],
+    roleKeywords: [
+      ...stringList(parsed.roleKeywords, 8),
+      ...domains,
+      ...stringList(parsed.titles, 5),
+    ],
     skills: stringList(parsed.skills, 8),
     locations: [...new Set(locations)],
     jobTypes,
@@ -325,6 +412,9 @@ export async function extractIntentWithLLM(
     remotePreference,
     englishFriendly: parsed.englishFriendly === true,
     ...(related.length ? { related } : {}),
+    ...(exclusions.length ? { exclusions } : {}),
+    ...(remove.length ? { remove } : {}),
+    ...(uncertain.length ? { uncertain } : {}),
   };
 
   const queries = stringList(parsed.searchQueries, 8).map((q) => q.replace(/"/g, ""));
@@ -338,13 +428,25 @@ export async function extractIntentWithLLM(
     related.length > 0 ||
     queries.length > 0 ||
     Boolean(summary);
-  if (!hasSignal) return null;
+
+  const diagnostics: LlmDiagnostics = {
+    status: answer.fallbackPath ? "fallback" : "ok",
+    provider: answer.provider,
+    attempts: answer.attempts,
+    latencyMs: answer.latencyMs,
+    rateLimited: answer.rateLimited,
+    ...(answer.fallbackPath ? { fallbackPath: answer.fallbackPath } : {}),
+  };
+  if (!hasSignal) return { intent: null, diagnostics };
 
   return {
-    draft,
-    summary,
-    queries,
-    provider: answer.provider,
-    ...(answer.usage ? { usage: answer.usage } : {}),
+    intent: {
+      draft,
+      summary,
+      queries,
+      provider: answer.provider,
+      ...(answer.usage ? { usage: answer.usage } : {}),
+    },
+    diagnostics,
   };
 }
