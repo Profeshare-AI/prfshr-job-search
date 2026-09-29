@@ -323,6 +323,13 @@ ADMIN_ACCESS_CODE=<a long random code> bunx convex run admin:provisionAccessCode
 ```
 
 With no `ADMIN_ACCESS_CODE` set, one is generated and returned exactly once to the caller.
+
+`ADMIN_ACCESS_CODE` has to be a **deployment** environment variable — the one the Convex
+runtime reads (`bun convex env set ADMIN_ACCESS_CODE <code>`, or the deployment's env UI). A
+value that lives only in a local env file is invisible to the function and provisioning then
+generates a code instead of storing the one you chose; set the variable first, then re-run the
+command above.
+
 Rotation revokes every existing administrator session. Failed attempts are rate-limited with a
 temporary lockout, and one generic `Not authorized.` covers every failure so the endpoint
 cannot be used to discover which accounts exist.
@@ -502,7 +509,7 @@ Convex deployment (server-side, read with `process.env` inside actions):
 | `ADZUNA_APP_ID` | no | Adzuna app id — enables the India index |
 | `ADZUNA_APP_KEY` | no | Adzuna app key, from the same registration |
 | `VLY_INTEGRATION_KEY` | no | Alternative built-in AI gateway, used automatically when present |
-| `ADMIN_ACCESS_CODE` | no | Administrator access code, read once by `admin:provisionAccessCode` |
+| `ADMIN_ACCESS_CODE` | no | Administrator access code, read once by `admin:provisionAccessCode`. Must be set on the deployment, not only locally |
 | `ANALYTICS_SALT` | recommended | Salt for pseudonymous analytics ids (`bun convex env set ANALYTICS_SALT <random>`) |
 
 Front end, optional:

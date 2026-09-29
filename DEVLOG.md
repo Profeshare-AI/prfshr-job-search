@@ -550,3 +550,19 @@ vague-vs-specific request guidance.
   email name (unchanged from the previous entry).
 - Feedback on individual results ("relevant / not relevant") is deliberately not in this pass; the
   interaction records in place are the ground it will be built on.
+
+**Release**
+
+- Pushed as PR #6 on `codebuff/sync` (commit `0cd2a34`) against `main`. Nothing is merged yet.
+- Live re-check of the corrective prompt on the dev deployment: `explicit-role`, exactly five scored
+  criteria, all `explicitly-stated` (`Not Contract` hard, `Remote` hard, `Berlin` soft,
+  `English-friendly` hard, `data scientist` soft), 4,374 listings scanned → 10 returned, 97 hard
+  contradictions and 302 relevance removals, average fit 79.6 at average coverage 58.3, 2.8 s end
+  to end, origin `public`, consent `granted`.
+- Unauthorized access re-checked: `adminAnalytics:overview` and `jobs/search:adminTestSearch` both
+  answer a generic `Not authorized.` for an invalid token.
+- `admin:provisionAccessCode` generated a code because `ADMIN_ACCESS_CODE` is not visible to the
+  deployment runtime, so the stored code is currently unknown and the console fails closed. Set
+  the variable *on the deployment* and re-run provisioning to get in; the README now says so.
+- Public pages re-audited: no administrator route, no Profile Fit or résumé copy, no token,
+  quota or provider diagnostics; the byline appears only in the footer and on `/about`.
